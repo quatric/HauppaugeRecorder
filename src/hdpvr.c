@@ -39,6 +39,8 @@
 #define NXFERS          16
 #define XFER_SIZE       (64 * 1024)
 #define STALL_MS        1500  /* no data for this long: restart the encoder */
+#define SETTLE_MS       3000  /* after configuring, a start sooner than ~2 s never sends data */
+#define FIRST_DATA_MS   10000 /* the encoder needs a few seconds to send its first data after a start */
 #define RESTART_WAIT_MS 4000  /* the firmware needs this after a stop */
 
 static const uint16_t known_pids[] = { 0x4900, 0x4901, 0x4902, 0x4903, 0x4982 };
@@ -63,6 +65,8 @@ struct hdpvr {
     void *user;
     volatile uint64_t bytes;
     volatile int64_t last_data_ms;
+    int64_t configured_ms; /* when the last configuration change was sent */
+    volatile int got_data; /* data arrived since the last encoder start */
     int restarts;
 };
 
@@ -409,6 +413,7 @@ int hdpvr_configure(hdpvr_t *dev, const hdpvr_options_t *o)
     uint8_t boost = c.audio_boost ? 1 : 0;
     r |= ctrl_out(dev, 0xd5, 0, 0, &boost, 1);
     dev->opts = c;
+    dev->configured_ms = now_ms();
     return r ? LIBUSB_ERROR_IO : 0;
 }
 
@@ -437,6 +442,7 @@ static void LIBUSB_CALL xfer_cb(struct libusb_transfer *x)
     if (x->status == LIBUSB_TRANSFER_COMPLETED && x->actual_length > 0) {
         dev->bytes += (uint64_t)x->actual_length;
         dev->last_data_ms = now_ms();
+        dev->got_data = 1;
         if (dev->cb)
             dev->cb(x->buffer, (size_t)x->actual_length, dev->user);
     }
@@ -484,6 +490,11 @@ static int encoder_start(hdpvr_t *dev, int timeout_ms)
         msleep(250);
     }
     dbg(1, "signal %dx%d at %d Hz", s.width, s.height, s.fps);
+    int64_t settle = dev->configured_ms + SETTLE_MS - now_ms();
+    if (settle > 0) {
+        dbg(1, "letting the encoder settle for %d ms", (int)settle);
+        msleep((int)settle);
+    }
     int r = ctrl_out(dev, 0xb8, 0x0001, 0, NULL, 0);
     if (!r)
         r = set1(dev, V_START, 0);
@@ -491,6 +502,7 @@ static int encoder_start(hdpvr_t *dev, int timeout_ms)
         return r;
 
     dev->streaming = 1;
+    dev->got_data = 0;
     dev->last_data_ms = now_ms();
     for (int i = 0; i < NXFERS; i++) {
         libusb_fill_bulk_transfer(dev->xfers[i], dev->h, dev->ep, dev->bufs[i], XFER_SIZE, xfer_cb, dev, 0);
@@ -518,9 +530,10 @@ static void *event_thread(void *arg)
     while (!dev->quit) {
         struct timeval tv = { 0, 100000 };
         libusb_handle_events_timeout_completed(dev->ctx, &tv, NULL);
-        if (dev->streaming && now_ms() - dev->last_data_ms > STALL_MS) {
+        int limit = dev->got_data ? STALL_MS : FIRST_DATA_MS;
+        if (dev->streaming && now_ms() - dev->last_data_ms > limit) {
             /* the firmware sometimes stops sending; restart it like the Windows driver does */
-            dbg(0, "no data for %d ms, restarting the encoder", STALL_MS);
+            dbg(0, "no data for %d ms, restarting the encoder", limit);
             encoder_stop(dev);
             for (int t = 0; t < RESTART_WAIT_MS / 100 && !dev->quit; t++)
                 msleep(100);

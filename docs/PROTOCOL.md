@@ -57,7 +57,9 @@ All byte arithmetic wraps at 8 bits. The result is sent with the Unlock request.
 ## Streaming
 
 1. Wait until Video info reports a picture (poll every 250 ms).
-2. Encoder start, then Start.
-3. Read the bulk endpoint. If no data arrives for about a second, the encoder has stalled: Stop,
-   empty the endpoint, wait 4 s (the firmware needs it), and start again.
-4. Stop, then empty the endpoint.
+2. Wait until at least 3 s have passed since the last setting was sent. Tested on firmware 0x1e: a
+   start sent less than about 2 s after configuring is accepted but never produces any data.
+3. Encoder start, then Start. The first data can take a few seconds to arrive.
+4. Read the bulk endpoint. Once data has been flowing, a gap of more than 1.5 s means the encoder
+   has stalled: Stop, empty the endpoint, wait 4 s (the firmware needs it), and start again.
+5. Stop, then empty the endpoint.
