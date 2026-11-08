@@ -36,6 +36,7 @@
 #define V_FILTER      0x3100
 
 #define CTRL_TIMEOUT_MS 2000
+#define BOOT_TIMEOUT_MS 10000 /* status and unlock: a box that just powered on is still booting */
 #define NXFERS          16
 #define XFER_SIZE       (64 * 1024)
 #define STALL_MS        1500  /* no data for this long: restart the encoder */
@@ -64,6 +65,7 @@ struct hdpvr {
     hdpvr_data_cb cb;
     void *user;
     volatile uint64_t bytes;
+    int ctrl_timeout_ms;
     volatile int64_t last_data_ms;
     int64_t configured_ms; /* when the last configuration change was sent */
     volatile int got_data; /* data arrived since the last encoder start */
@@ -123,7 +125,7 @@ static int ctrl_out(hdpvr_t *dev, uint8_t req, uint16_t value, uint16_t index, c
         return LIBUSB_ERROR_INVALID_PARAM;
     if (len)
         memcpy(buf, data, len);
-    int r = libusb_control_transfer(dev->h, REQ_OUT, req, value, index, len ? buf : NULL, len, CTRL_TIMEOUT_MS);
+    int r = libusb_control_transfer(dev->h, REQ_OUT, req, value, index, len ? buf : NULL, len, dev->ctrl_timeout_ms ? dev->ctrl_timeout_ms : CTRL_TIMEOUT_MS);
     dbg(2, "out req 0x%02x value 0x%04x len %d -> %d", req, value, len, r);
     if (r < 0)
         return r;
@@ -132,7 +134,7 @@ static int ctrl_out(hdpvr_t *dev, uint8_t req, uint16_t value, uint16_t index, c
 
 static int ctrl_in(hdpvr_t *dev, uint16_t value, uint8_t *buf, uint16_t len)
 {
-    int r = libusb_control_transfer(dev->h, REQ_IN, 0x81, value, CTRL_INDEX, buf, len, CTRL_TIMEOUT_MS);
+    int r = libusb_control_transfer(dev->h, REQ_IN, 0x81, value, CTRL_INDEX, buf, len, dev->ctrl_timeout_ms ? dev->ctrl_timeout_ms : CTRL_TIMEOUT_MS);
     if (g_verbose >= 2) {
         char hex[3 * 64 + 1] = "";
         for (int i = 0; i < r && i < 64; i++)
@@ -343,7 +345,10 @@ int hdpvr_open(hdpvr_t **out)
     dev->claimed = 1;
     dbg(1, "HD PVR %04x:%04x, stream on endpoint 0x%02x", dev->info.vid, dev->info.pid, dev->ep);
 
-    if ((r = unlock(dev))) {
+    dev->ctrl_timeout_ms = BOOT_TIMEOUT_MS;
+    r = unlock(dev);
+    dev->ctrl_timeout_ms = 0;
+    if (r) {
         hdpvr_close(dev);
         return r;
     }

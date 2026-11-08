@@ -5,8 +5,10 @@ Userspace capture driver and recorder for the **Hauppauge HD PVR** (model 1212, 
 driver: it unlocks and configures the box through libusb and records the H.264 transport stream the
 box's own encoder produces.
 
-Status: the command line recorder `hdpvr-capture` is written and builds for every platform. It has
-not been tested on a device yet.
+Status: the command line recorder `hdpvr-capture` builds for every platform. It has been tested on
+macOS 10.15 (Intel) with an HD PVR 1212 on firmware 0x1e, recording 480i from the component and
+composite inputs with AAC audio and no dropped packets. S-Video, HD component modes, AC-3 audio,
+and the Windows and Linux builds have not been tested on a device yet.
 
 ## Use
 
