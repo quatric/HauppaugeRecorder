@@ -117,7 +117,13 @@ int main(int argc, char **argv)
         printf("device              %04x:%04x\n", in->vid, in->pid);
         printf("firmware            0x%02x (%s)%s\n", in->firmware, in->firmware_date,
                in->ac3_capable ? ", AC-3 capable" : "");
-        if (hdpvr_configure(dev, &o) == 0 && hdpvr_get_signal(dev, &s) == 0) {
+        /* the encoder needs a moment to lock onto a newly selected input */
+        int ok = hdpvr_configure(dev, &o) == 0 && hdpvr_get_signal(dev, &s) == 0;
+        for (int i = 0; ok && !s.width && i < 12; i++) {
+            usleep(250000);
+            ok = hdpvr_get_signal(dev, &s) == 0;
+        }
+        if (ok) {
             if (s.width)
                 printf("signal              %dx%d at %d Hz\n", s.width, s.height, s.fps);
             else

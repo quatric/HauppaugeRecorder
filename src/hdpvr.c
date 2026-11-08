@@ -129,7 +129,12 @@ static int ctrl_out(hdpvr_t *dev, uint8_t req, uint16_t value, uint16_t index, c
 static int ctrl_in(hdpvr_t *dev, uint16_t value, uint8_t *buf, uint16_t len)
 {
     int r = libusb_control_transfer(dev->h, REQ_IN, 0x81, value, CTRL_INDEX, buf, len, CTRL_TIMEOUT_MS);
-    dbg(2, "in value 0x%04x len %d -> %d", value, len, r);
+    if (g_verbose >= 2) {
+        char hex[3 * 64 + 1] = "";
+        for (int i = 0; i < r && i < 64; i++)
+            snprintf(hex + 3 * i, 4, " %02x", buf[i]);
+        dbg(2, "in value 0x%04x len %d -> %d:%s", value, len, r, hex);
+    }
     return r;
 }
 
