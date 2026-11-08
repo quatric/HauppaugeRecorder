@@ -43,14 +43,20 @@ $V/os/threads_windows.c $V/os/windows_common.c $V/os/windows_usbdk.c $V/os/windo
     x86-*)     wcc=$WIN_CC_x86;     karch=x86 ;;
     aarch64-*) wcc=$WIN_CC_aarch64; karch= ;;
     esac
+    # the icon (from Hauppauge Capture): Zig compiles .rc itself, MinGW needs windres
+    RES=resources/windows/app.rc
     if [ -n "$wcc" ]; then
       CC="$wcc"; LIBS="$LIBS -static -lpthread"
+      RES=build/app-$name.o
+      mkdir -p build
+      "$(echo "$wcc" | sed -E 's/-(clang|gcc).*$//')-windres" -I resources/windows -O coff \
+          resources/windows/app.rc -o "$RES"
     elif [ -n "$karch" ]; then
       echo "warning: $name built with Zig links the Universal CRT and will not start on a stock Windows 7" >&2
     fi
     ;;
   *linux*)
-    os=linux; ext=
+    os=linux; ext=; RES=
     LU="$V/core.c $V/descriptor.c $V/hotplug.c $V/io.c $V/strerror.c $V/sync.c $V/os/events_posix.c \
 $V/os/threads_posix.c $V/os/linux_usbfs.c $V/os/linux_netlink.c"
     FL="-I$V/config/linux"
@@ -59,10 +65,10 @@ $V/os/threads_posix.c $V/os/linux_usbfs.c $V/os/linux_netlink.c"
   *) echo "unsupported target $t" >&2; exit 1 ;;
   esac
   echo "== $name ($CC)"
-  $CC $COMMON $FL $LU src/hdpvr.c src/capture.c $LIBS -o "$OUT/$name/hdpvr-capture$ext"
+  $CC $COMMON $FL $LU src/hdpvr.c src/capture.c $RES $LIBS -o "$OUT/$name/hdpvr-capture$ext"
   if [ $os = windows ]; then
     # Zadig-style driver installer, plus the libusbK fallback driver
-    $CC $COMMON $FL src/driver_win32.c -lsetupapi -lcfgmgr32 -lcrypt32 -lwintrust -lshell32 -ladvapi32 -lole32 \
+    $CC $COMMON $FL src/driver_win32.c $RES -lsetupapi -lcfgmgr32 -lcrypt32 -lwintrust -lshell32 -ladvapi32 -lole32 \
         $( [ -n "$wcc" ] && echo -static ) -o "$OUT/$name/hdpvr-driver.exe"
     if [ -n "$karch" ]; then
       if [ -n "$LIBUSBK_DIR" ]; then

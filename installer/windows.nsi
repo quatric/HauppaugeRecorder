@@ -28,6 +28,9 @@ SetCompressor /SOLID lzma
 InstallDirRegKey HKLM "Software\HauppaugeRecorder" "InstallDir"
 BrandingText "HauppaugeRecorder ${VERSION}"
 
+; the icon from Hauppauge Capture, also built into hdpvr-capture.exe and hdpvr-driver.exe
+!define MUI_ICON "${__FILEDIR__}\..\resources\windows\app.ico"
+!define MUI_UNICON "${__FILEDIR__}\..\resources\windows\app.ico"
 !define MUI_COMPONENTSPAGE_SMALLDESC
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
@@ -71,12 +74,13 @@ Section "HauppaugeRecorder" SecApp
   File /r "${SRC}\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   ; hdpvr-capture is a command line tool: the shortcut opens a prompt in its folder
-  CreateShortcut "$SMPROGRAMS\HD PVR Recorder.lnk" "$SYSDIR\cmd.exe" '/k "cd /d "$INSTDIR" && hdpvr-capture --help"' "$SYSDIR\cmd.exe" 0
+  CreateShortcut "$SMPROGRAMS\HD PVR Recorder.lnk" "$SYSDIR\cmd.exe" '/k "cd /d "$INSTDIR" && hdpvr-capture --help"' "$INSTDIR\hdpvr-capture.exe" 0
   WriteRegStr HKLM "Software\HauppaugeRecorder" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "HauppaugeRecorder"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "HauppaugeRecorder"
   WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\hdpvr-capture.exe"
   WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
