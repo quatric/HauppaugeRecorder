@@ -109,6 +109,10 @@ int main(int argc, char **argv)
     int r = hdpvr_open(&dev);
     if (r) {
         fprintf(stderr, "hdpvr-capture: %s\n", hdpvr_strerror(r));
+#ifdef _WIN32
+        if (r == HDPVR_ERR_NO_DRIVER)
+            fprintf(stderr, "hdpvr-capture: run hdpvr-driver.exe (in this folder) to install it\n");
+#endif
         return 1;
     }
     const hdpvr_info_t *in = hdpvr_info(dev);

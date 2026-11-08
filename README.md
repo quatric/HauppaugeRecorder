@@ -6,9 +6,9 @@ driver: it unlocks and configures the box through libusb and records the H.264 t
 box's own encoder produces.
 
 Status: the command line recorder `hdpvr-capture` builds for every platform. It has been tested on
-macOS 10.15 (Intel) with an HD PVR 1212 on firmware 0x1e, recording 480i from the component and
-composite inputs with AAC audio and no dropped packets. S-Video, HD component modes, AC-3 audio,
-and the Windows and Linux builds have not been tested on a device yet.
+macOS 10.15 (Intel) with an HD PVR 1212 on firmware 0x1e, recording 480i and 480p from the
+component input and 480i from composite, with AAC audio and no dropped packets. S-Video, 720p and
+1080i, AC-3 audio, and the Windows and Linux builds have not been tested on a device yet.
 
 ## Use
 
@@ -40,8 +40,16 @@ it is restarted after four seconds, as the Windows driver does.
 * **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.11 or later.
 * **Linux**: the kernel's `hdpvr` driver is detached automatically while recording. Allow access
   with a udev rule: `SUBSYSTEM=="usb", ATTR{idVendor}=="2040", MODE="0666"`.
-* **Windows**: install WinUSB for the HD PVR with [Zadig](https://zadig.akeo.ie) (or have UsbDk
-  installed).
+* **Windows**: 7 and later, on x86_64, x86 and Arm. The setup program installs `hdpvr-capture` and
+  a driver for the HD PVR, the way [Zadig](https://zadig.akeo.ie) does. With the zip instead, run
+  `hdpvr-driver.exe` once (it asks for administrator rights). It uses WinUSB, or the signed libusbK
+  driver on a Windows that has no WinUSB setup file. `hdpvr-driver uninstall` gives the HD PVR back
+  to its previous driver, such as Hauppauge's own, and `hdpvr-driver status` shows what is in use.
+
+  To install the driver, `hdpvr-driver` writes an INF for the HD PVR, builds a catalog for it and
+  signs that catalog with a certificate it creates on your PC. The certificate is trusted for code
+  signing on that PC only, and its private key is deleted right after signing, so nothing else can
+  be signed with it. The certificate is removed again on uninstall.
 
 ## Build
 
@@ -49,6 +57,13 @@ it is restarted after four seconds, as the Windows driver does.
 make                     # macOS: build/hdpvr-capture
 scripts/build-all.sh     # Windows and Linux, with Zig: dist/<target>/
 ```
+
+Zig links the Universal CRT, which a stock Windows 7 lacks. For Windows 7 builds, point
+`WIN_CC_x86_64`, `WIN_CC_x86` (and optionally `WIN_CC_aarch64`) at an msvcrt MinGW-w64 compiler such
+as [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)'s msvcrt release, and set `LIBUSBK_DIR` to
+the folder `scripts/fetch-libusbk.sh` prints to include the libusbK fallback driver. Pushing a `v*`
+tag runs `.github/workflows/release.yml`, which does all of this and publishes the macOS tarball,
+the Linux tarballs, and the Windows zips and setup programs.
 
 ## How it works
 

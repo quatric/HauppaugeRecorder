@@ -3,6 +3,7 @@
  * Protocol notes: docs/PROTOCOL.md.
  */
 #include "hdpvr.h"
+#include "known_devices.h"
 
 #include <libusb.h>
 #include <pthread.h>
@@ -36,6 +37,7 @@
 #define V_FILTER      0x3100
 
 #define CTRL_TIMEOUT_MS 2000
+#define START_TIMEOUT_MS 8000 /* Encoder start: the Linux driver allows this long */
 #define BOOT_TIMEOUT_MS 10000 /* status and unlock: a box that just powered on is still booting */
 #define NXFERS          16
 #define XFER_SIZE       (64 * 1024)
@@ -44,8 +46,6 @@
 #define FIRST_DATA_MS   10000 /* the encoder needs a few seconds to send its first data after a start */
 #define RESTART_WAIT_MS 4000  /* the firmware needs this after a stop */
 
-static const uint16_t known_pids[] = { 0x4900, 0x4901, 0x4902, 0x4903, 0x4982 };
-#define HCW_VID 0x2040
 
 struct hdpvr {
     libusb_context *ctx;
@@ -111,7 +111,7 @@ const char *hdpvr_strerror(int err)
     case HDPVR_ERR_UNLOCK: return "the HD PVR did not accept the unlock handshake";
     case HDPVR_ERR_NO_MEMORY: return "out of memory";
     case HDPVR_ERR_NO_DRIVER:
-        return "an HD PVR is plugged in, but it does not use the WinUSB driver, so it cannot be opened";
+        return "an HD PVR is plugged in, but it does not have the WinUSB or libusbK driver, so it cannot be opened";
     }
     return libusb_strerror((enum libusb_error)err);
 }
@@ -223,10 +223,8 @@ static int unlock(hdpvr_t *dev)
 
 static int is_hdpvr(const struct libusb_device_descriptor *d)
 {
-    if (d->idVendor != HCW_VID)
-        return 0;
-    for (size_t i = 0; i < sizeof(known_pids) / sizeof(known_pids[0]); i++)
-        if (d->idProduct == known_pids[i])
+    for (size_t i = 0; i < KNOWN_DEVICE_COUNT; i++)
+        if (d->idVendor == known_devices[i].vid && d->idProduct == known_devices[i].pid)
             return 1;
     return 0;
 }
@@ -500,7 +498,9 @@ static int encoder_start(hdpvr_t *dev, int timeout_ms)
         dbg(1, "letting the encoder settle for %d ms", (int)settle);
         msleep((int)settle);
     }
+    dev->ctrl_timeout_ms = START_TIMEOUT_MS;
     int r = ctrl_out(dev, 0xb8, 0x0001, 0, NULL, 0);
+    dev->ctrl_timeout_ms = 0;
     if (!r)
         r = set1(dev, V_START, 0);
     if (r)

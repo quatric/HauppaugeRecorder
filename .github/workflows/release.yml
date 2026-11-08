@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - name: Check Universal 2
+        run: |
+          f=build/hdpvr-capture
+          lipo "$f" -verify_arch x86_64 && lipo "$f" -verify_arch arm64
+          ! otool -L "$f" | grep -q -e '@rpath/' -e libusb
+          otool -l "$f" | grep -A4 -E 'LC_VERSION_MIN_MACOSX|LC_BUILD_VERSION' | grep -E 'version|minos'
+      - name: Package
+        run: |
+          mkdir -p out/stage
+          cp build/hdpvr-capture README.md out/stage/
+          tar -C out/stage -czf out/HauppaugeRecorder-macos-universal.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: out/*.tar.gz }
+
+  windows:
+    runs-on: ubuntu-latest
+    env:
+      LLVM_MINGW: llvm-mingw-20261104-msvcrt-ubuntu-22.04-x86_64
+      LLVM_MINGW_SHA256: 6e3342e2e0dfa56e9178f3c34b198f278bd5e603db4a759455d1439cc2230630
+      # msvcrt-based toolchain, so the x86/x86_64 builds start on Windows 7
+      WIN_CC_x86_64: x86_64-w64-mingw32-clang
+      WIN_CC_x86: i686-w64-mingw32-clang
+      WIN_CC_aarch64: aarch64-w64-mingw32-clang
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.17.0 }
+      - run: sudo apt-get update && sudo apt-get install -y nsis p7zip-full
+      - name: llvm-mingw (msvcrt)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/lm.tar.xz" \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/$LLVM_MINGW.tar.xz"
+          echo "$LLVM_MINGW_SHA256  $RUNNER_TEMP/lm.tar.xz" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xJf "$RUNNER_TEMP/lm.tar.xz"
+          echo "$RUNNER_TEMP/$LLVM_MINGW/bin" >> "$GITHUB_PATH"
+      - run: echo "LIBUSBK_DIR=$PWD/$(scripts/fetch-libusbk.sh)" >> "$GITHUB_ENV"
+      - run: scripts/build-all.sh x86_64-windows-gnu x86-windows-gnu aarch64-windows-gnu
+      - name: Check Windows 7 compatibility (no Universal CRT)
+        run: |
+          bad=0
+          for f in dist/x86_64-windows-gnu/*.exe dist/x86-windows-gnu/*.exe; do
+            dlls=$(llvm-objdump -p "$f" | sed -n 's/.*DLL Name: //p' | sort -u | tr '\n' ' ')
+            echo "$f: $dlls"
+            case $dlls in *api-ms-win-crt*|*ucrtbase*) echo "::error::$f needs the Universal CRT"; bad=1 ;; esac
+          done
+          exit $bad
+      - name: Package
+        run: |
+          mkdir out
+          v=${GITHUB_REF_NAME#v}; case $GITHUB_REF in refs/tags/*) ;; *) v=0.0.0-dev ;; esac
+          for a in x86_64 x86 aarch64; do
+            n=$a-windows-gnu
+            cp README.md "dist/$n/"
+            (cd dist && zip -qr "../out/HauppaugeRecorder-$n.zip" "$n")
+            makensis -V2 -DARCH=$a -DVERSION=$v -DSRC="$PWD/dist/$n" \
+              -DOUTFILE="$PWD/out/HauppaugeRecorder-$a-windows-setup.exe" installer/windows.nsi
+          done
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: out/* }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.17.0 }
+      - run: scripts/build-all.sh x86_64-linux-gnu.2.31 x86-linux-gnu.2.31 aarch64-linux-gnu.2.31 arm-linux-gnueabihf.2.31 x86_64-linux-musl aarch64-linux-musl
+      - name: Package
+        run: |
+          mkdir out
+          for d in dist/*; do
+            n=$(basename "$d")
+            cp README.md "$d/"
+            tar -C dist -czf "out/HauppaugeRecorder-$n.tar.gz" "$n"
+          done
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: out/* }
+
+  release:
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Publish
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
+            --title "HauppaugeRecorder $GITHUB_REF_NAME" --generate-notes
