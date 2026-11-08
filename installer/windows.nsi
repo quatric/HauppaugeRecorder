@@ -29,8 +29,9 @@ InstallDirRegKey HKLM "Software\HauppaugeRecorder" "InstallDir"
 BrandingText "HauppaugeRecorder ${VERSION}"
 
 ; the icon from Hauppauge Capture, also built into hdpvr-capture.exe and hdpvr-driver.exe
-!define MUI_ICON "${__FILEDIR__}/../resources/windows/app.ico"
-!define MUI_UNICON "${__FILEDIR__}/../resources/windows/app.ico"
+; (makensis works from this file's folder, so the path is relative to it)
+!define MUI_ICON "../resources/windows/app.ico"
+!define MUI_UNICON "../resources/windows/app.ico"
 !define MUI_COMPONENTSPAGE_SMALLDESC
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
