@@ -136,13 +136,13 @@ static NSSize natural_size(NSView *v)
 {
     if ([v isKindOfClass:Box.class])
         return [(Box *)v naturalSize];
-    NSSize s = v.intrinsicContentSize;
+    NSSize s = v.intrinsicContentSize; /* -1 is NSViewNoIntrinsicMetric, a variable only since 10.11 */
     /* a label's cell adds the few points of padding its intrinsic width leaves out */
     if ([v isKindOfClass:NSTextField.class])
         s.width = MAX(s.width, [[(NSTextField *)v cell] cellSize].width);
-    if (s.width == NSViewNoIntrinsicMetric || s.width < 0)
+    if (s.width < 0)
         s.width = v.frame.size.width;
-    if (s.height == NSViewNoIntrinsicMetric || s.height < 0)
+    if (s.height < 0)
         s.height = v.frame.size.height;
     NSArray<NSNumber *> *lim = objc_getAssociatedObject(v, &kSizeLimits);
     if (lim) {

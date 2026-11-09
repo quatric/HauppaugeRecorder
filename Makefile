@@ -4,7 +4,7 @@ PREFIX  ?= /usr/local
 # Universal 2 (Intel + Apple silicon). 10.9 is the oldest macOS current
 # toolchains can still target (libarclite is gone from the SDK, so the ARC file is
 # compiled with -fobjc-arc but linked without it; libobjc has the ARC calls since 10.7); the arm64 slice is always 11.0 or later.
-VERSION      ?= 0.3.0
+VERSION      ?= 0.3.1
 ARCHS        ?= x86_64 arm64
 MACOSX_MIN   ?= 10.9
 ARCHFLAGS     = $(foreach a,$(ARCHS),-arch $(a)) -mmacosx-version-min=$(MACOSX_MIN)
