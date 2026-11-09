@@ -35,9 +35,9 @@ The output is a standard MPEG transport stream (H.264 video, AAC or AC-3 audio) 
 and most editors open directly. If the encoder stops sending (the firmware does this now and then),
 it is restarted after four seconds, as the Windows driver does.
 
-## HD PVR Capture (the app)
+## HauppaugeRecorder (the app)
 
-macOS and Windows also get **HD PVR Capture**, a window with a live preview, a level meter, a
+macOS and Windows also get **HauppaugeRecorder**, a window with a live preview, a level meter, a
 Record button with a timer, a snapshot button and a choice of recording folder. It shows the
 picture and plays the sound through a small bundled ffmpeg (decoding only), and records the same
 transport stream as `hdpvr-capture`. On macOS 10.9 to 10.14 the sound goes straight to Core Audio's
@@ -62,7 +62,7 @@ default output; from 10.15 it uses AVAudioEngine.
 ## Build
 
 ```bash
-make                     # macOS: build/hdpvr-capture and "build/HD PVR Capture.app"
+make                     # macOS: build/hdpvr-capture and "build/HauppaugeRecorder.app"
 make test SAMPLE=recording.ts   # engine test without a device
 scripts/build-all.sh     # Windows and Linux, with Zig: dist/<target>/
 ```

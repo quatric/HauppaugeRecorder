@@ -1,5 +1,5 @@
 /*
- * HD PVR Capture engine shared by the macOS, Windows and Linux apps: finds
+ * HauppaugeRecorder engine shared by the macOS, Windows and Linux apps: finds
  * and configures the HD PVR, keeps its encoder running, records its H.264
  * transport stream unchanged to a .ts file, and decodes it with ffmpeg for
  * the preview picture, the level meters and audio monitoring. Everything
@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define APP_NAME "HD PVR Capture"
+#define APP_NAME "HauppaugeRecorder"
 
 typedef struct app app_t;
 
@@ -75,7 +75,7 @@ uint64_t app_record_bytes(app_t *a);
 /* Saves the current picture as a square-pixel PNG. */
 int app_snapshot(app_t *a, const char *folder, char *path, int pathlen, char *err, int errlen);
 
-/* "HD PVR Capture 2026-11-08 at 21.05.33.ext" in folder. */
+/* "HauppaugeRecorder 2026-11-08 at 21.05.33.ext" in folder. */
 void app_timestamped_path(const char *folder, const char *ext, char *out, int len);
 
 /* Settings: key=value lines in the user's config folder (Windows and Linux). */

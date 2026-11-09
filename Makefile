@@ -4,7 +4,7 @@ PREFIX  ?= /usr/local
 # Universal 2 (Intel + Apple silicon). 10.9 is the oldest macOS current
 # toolchains can still target (libarclite is gone from the SDK, so the ARC file is
 # compiled with -fobjc-arc but linked without it; libobjc has the ARC calls since 10.7); the arm64 slice is always 11.0 or later.
-VERSION      ?= 0.2.1
+VERSION      ?= 0.3.0
 ARCHS        ?= x86_64 arm64
 MACOSX_MIN   ?= 10.9
 ARCHFLAGS     = $(foreach a,$(ARCHS),-arch $(a)) -mmacosx-version-min=$(MACOSX_MIN)
@@ -19,7 +19,7 @@ SYSLIBS  = -framework IOKit -framework CoreFoundation -framework Security
 
 BUILD   = build
 LIBUSB  = $(BUILD)/libusb-1.0.a
-APP     = $(BUILD)/HD PVR Capture.app
+APP     = $(BUILD)/HauppaugeRecorder.app
 # A small LGPL ffmpeg (scripts/build-ffmpeg.sh) goes into the app for the
 # preview and the sound. BUNDLE_FFMPEG=0 skips it (then ffmpeg comes from PATH).
 BUNDLE_FFMPEG ?= 1
@@ -59,7 +59,7 @@ app: $(BUILD)/hdpvr-capture-app resources/Info.plist resources/AppIcon.icns $(if
 	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
 	sed -e "s/@MACOSX_MIN@/$(MACOSX_MIN)/" -e "s/@VERSION@/$(VERSION)/" resources/Info.plist > "$(APP)/Contents/Info.plist"
 	cp resources/AppIcon.icns "$(APP)/Contents/Resources/AppIcon.icns"
-	cp $(BUILD)/hdpvr-capture-app "$(APP)/Contents/MacOS/HD PVR Capture"
+	cp $(BUILD)/hdpvr-capture-app "$(APP)/Contents/MacOS/HauppaugeRecorder"
 	if [ "$(BUNDLE_FFMPEG)" = 1 ]; then \
 	    cp $(FFMPEG) "$(APP)/Contents/MacOS/ffmpeg" && \
 	    mkdir -p "$(APP)/Contents/Resources/licenses" && cp resources/licenses/* "$(APP)/Contents/Resources/licenses/"; fi

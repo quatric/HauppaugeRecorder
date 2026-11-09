@@ -1,4 +1,4 @@
-; HD PVR Capture for Windows: the app, its bundled ffmpeg, the hdpvr-capture command line tool and the HD PVR driver.
+; HauppaugeRecorder for Windows: the app, its bundled ffmpeg, the hdpvr-capture command line tool and the HD PVR driver.
 ;   makensis -DARCH=x86_64|x86|aarch64 -DVERSION=0.1.0 -DSRC=dist\x86_64-windows-gnu \
 ;            -DOUTFILE=HauppaugeRecorder-x86_64-windows-setup.exe installer/windows.nsi
 ; The driver is installed by hdpvr-driver.exe (src/driver_win32.c): WinUSB, or
@@ -32,8 +32,8 @@ BrandingText "HauppaugeRecorder ${VERSION}"
 ; (makensis works from this file's folder, so the path is relative to it)
 !define MUI_ICON "../resources/windows/app.ico"
 !define MUI_UNICON "../resources/windows/app.ico"
-!define MUI_FINISHPAGE_RUN "$INSTDIR\HD PVR Capture.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Start HD PVR Capture"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\HauppaugeRecorder.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Start HauppaugeRecorder"
 !define MUI_COMPONENTSPAGE_SMALLDESC
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
@@ -75,14 +75,17 @@ Section "HauppaugeRecorder" SecApp
   SectionIn RO
   SetOutPath "$INSTDIR"
   File /r "${SRC}\*.*"
+  Delete "$INSTDIR\HD PVR Capture.exe" ; earlier versions' name
+  Delete "$SMPROGRAMS\HD PVR Capture.lnk"
+  Delete "$DESKTOP\HD PVR Capture.lnk"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  CreateShortcut "$SMPROGRAMS\HD PVR Capture.lnk" "$INSTDIR\HD PVR Capture.exe"
+  CreateShortcut "$SMPROGRAMS\HauppaugeRecorder.lnk" "$INSTDIR\HauppaugeRecorder.exe"
   WriteRegStr HKLM "Software\HauppaugeRecorder" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "HauppaugeRecorder"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "HauppaugeRecorder"
   WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\HD PVR Capture.exe"
+  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\HauppaugeRecorder.exe"
   WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
@@ -97,18 +100,18 @@ Section "HD PVR driver" SecDriver
   ${ElseIf} $0 == 2
     DetailPrint "The driver is ready; it will be used when the HD PVR is plugged in."
   ${Else}
-    MessageBox MB_ICONEXCLAMATION "The HD PVR driver could not be installed (code $0).$\nHD PVR Capture will offer to install it again when it starts."
+    MessageBox MB_ICONEXCLAMATION "The HD PVR driver could not be installed (code $0).$\nHauppaugeRecorder will offer to install it again when it starts."
   ${EndIf}
 SectionEnd
 
 Section /o "Desktop shortcut" SecDesktop
-  CreateShortcut "$DESKTOP\HD PVR Capture.lnk" "$INSTDIR\HD PVR Capture.exe"
+  CreateShortcut "$DESKTOP\HauppaugeRecorder.lnk" "$INSTDIR\HauppaugeRecorder.exe"
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "HD PVR Capture, the hdpvr-capture command line tool and ffmpeg for the preview and the sound."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecDriver} "Lets HD PVR Capture use the HD PVR: WinUSB (or libusbK where Windows has no WinUSB setup file), installed as Zadig would. This replaces Hauppauge's own driver for the HD PVR."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "A shortcut to HD PVR Capture on the desktop."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "HauppaugeRecorder, the hdpvr-capture command line tool and ffmpeg for the preview and the sound."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDriver} "Lets HauppaugeRecorder use the HD PVR: WinUSB (or libusbK where Windows has no WinUSB setup file), installed as Zadig would. This replaces Hauppauge's own driver for the HD PVR."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "A shortcut to HauppaugeRecorder on the desktop."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
@@ -116,6 +119,7 @@ Section "Uninstall"
     nsExec::ExecToLog '"$INSTDIR\hdpvr-driver.exe" uninstall --quiet'
     Pop $0
   keep_driver:
+  Delete "$INSTDIR\HauppaugeRecorder.exe"
   Delete "$INSTDIR\HD PVR Capture.exe"
   Delete "$INSTDIR\ffmpeg.exe"
   Delete "$INSTDIR\hdpvr-capture.exe"
@@ -130,8 +134,8 @@ Section "Uninstall"
   RMDir "$INSTDIR\licenses"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\HD PVR Capture.lnk"
-  Delete "$DESKTOP\HD PVR Capture.lnk"
+  Delete "$SMPROGRAMS\HauppaugeRecorder.lnk"
+  Delete "$DESKTOP\HauppaugeRecorder.lnk"
   DeleteRegKey HKLM "${UNINST_KEY}"
   DeleteRegValue HKLM "Software\HauppaugeRecorder" "InstallDir" ; the driver record stays if the driver was kept
 SectionEnd

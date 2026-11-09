@@ -1,5 +1,5 @@
 /*
- * HD PVR Capture for Windows: live preview and recording for the Hauppauge
+ * HauppaugeRecorder for Windows: live preview and recording for the Hauppauge
  * HD PVR, plain Win32 so it runs on any Windows 7+ PC (x64, x86, ARM64)
  * without a runtime.
  *
@@ -474,7 +474,7 @@ static void run_driver_installer(void)
     se.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&se) || !se.hProcess) {
         if (GetLastError() != ERROR_CANCELLED)
-            MessageBoxW(G.wnd, L"Could not start hdpvr-driver.exe. It should be in the same folder as HD PVR Capture.",
+            MessageBoxW(G.wnd, L"Could not start hdpvr-driver.exe. It should be in the same folder as HauppaugeRecorder.",
                         L"HD PVR driver", MB_ICONERROR);
         return;
     }
@@ -529,7 +529,7 @@ static void tick_ui(void)
     if (st == APP_NO_DRIVER && !G.asked_driver) {
         G.asked_driver = 1;
         if (MessageBoxW(G.wnd,
-                        L"An HD PVR is plugged in, but it does not have the driver HD PVR Capture uses "
+                        L"An HD PVR is plugged in, but it does not have the driver HauppaugeRecorder uses "
                         L"(WinUSB, or libusbK on Windows 7).\n\nInstall it now? This takes a few seconds and "
                         L"needs administrator rights. It replaces Hauppauge's own driver for the HD PVR; "
                         L"\"hdpvr-driver uninstall\" brings that back.",
@@ -719,7 +719,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     RECT r = { 0, 0, S(960), S(540 + BAR_H) };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, TRUE);
-    G.wnd = CreateWindowExW(0, L"HDPVRCapture", L"HD PVR Capture", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    G.wnd = CreateWindowExW(0, L"HDPVRCapture", L"HauppaugeRecorder", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                             CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, inst,
                             NULL);
     build_menu();
@@ -740,7 +740,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     G.app = app_start(input, audio, quality, pal);
     if (!G.app) {
-        MessageBoxW(NULL, L"Out of memory", L"HD PVR Capture", MB_ICONERROR);
+        MessageBoxW(NULL, L"Out of memory", L"HauppaugeRecorder", MB_ICONERROR);
         return 1;
     }
     app_set_widescreen(G.app, wide);

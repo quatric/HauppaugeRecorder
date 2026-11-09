@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the small, static, LGPL ffmpeg that is bundled with HD PVR Capture.
+# Builds the small, static, LGPL ffmpeg that is bundled with HauppaugeRecorder.
 # It holds only what the preview uses (src/app_core.c): the HD PVR's MPEG
 # transport stream in through a pipe, H.264, AAC and AC-3 decoding, yadif and
 # scale, and raw video frames or 16-bit PCM out through a pipe.

@@ -74,7 +74,7 @@ $V/os/threads_posix.c $V/os/linux_usbfs.c $V/os/linux_netlink.c"
   echo "== $name ($CC)"
   $CC $COMMON $FL $LU src/hdpvr.c src/capture.c $RES $LIBS -o "$OUT/$name/hdpvr-capture$ext"
   if [ -n "$GUI" ] && [ -f "$GUI" ]; then
-    $CC $COMMON $FL $LU $SRC $OSSRC $GUI $RES $GUILIBS $LIBS -o "$OUT/$name/HD PVR Capture$ext"
+    $CC $COMMON $FL $LU $SRC $OSSRC $GUI $RES $GUILIBS $LIBS -o "$OUT/$name/HauppaugeRecorder$ext"
   fi
   if [ $os = windows ]; then
     # Zadig-style driver installer, plus the libusbK fallback driver

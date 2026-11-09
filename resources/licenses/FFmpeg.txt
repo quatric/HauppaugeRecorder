@@ -1,6 +1,6 @@
-The ffmpeg program included with HD PVR Capture is FFmpeg 7.1.5
+The ffmpeg program included with HauppaugeRecorder is FFmpeg 7.1.5
 (https://ffmpeg.org), licensed under the GNU Lesser General Public License
-version 2.1 or later (see FFmpeg-COPYING.LGPLv2.1.txt). HD PVR Capture runs it
+version 2.1 or later (see FFmpeg-COPYING.LGPLv2.1.txt). HauppaugeRecorder runs it
 as a separate program to decode the HD PVR's stream for the preview picture
 and the sound; recordings are the HD PVR's own stream and do not go through it.
 

@@ -363,7 +363,7 @@ decoder_t *dec_start(const char *const *args, size_t chunk, dec_out_cb cb, void 
 #ifdef _WIN32
                  "ffmpeg.exe not found (it ships next to this program; or put one on PATH, or set HDPVR_FFMPEG)"
 #elif defined(__APPLE__)
-                 "ffmpeg not found (it ships inside HD PVR Capture.app; or brew install ffmpeg, or set HDPVR_FFMPEG)"
+                 "ffmpeg not found (it ships inside HauppaugeRecorder.app; or brew install ffmpeg, or set HDPVR_FFMPEG)"
 #else
                  "ffmpeg not found (it ships next to this program; or install the ffmpeg package, or set HDPVR_FFMPEG)"
 #endif

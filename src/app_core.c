@@ -1,4 +1,4 @@
-/* HD PVR Capture engine; see app_core.h. */
+/* HauppaugeRecorder engine; see app_core.h. */
 #include "app_core.h"
 #include "decoder.h"
 #include "hdpvr.h"

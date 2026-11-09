@@ -17,21 +17,21 @@ jobs:
       - run: make
       - name: Check Universal 2 and macOS 10.9
         run: |
-          for f in "build/HD PVR Capture.app/Contents/MacOS/HD PVR Capture" \
-                   "build/HD PVR Capture.app/Contents/MacOS/ffmpeg" build/hdpvr-capture build/ffmpeg; do
+          for f in "build/HauppaugeRecorder.app/Contents/MacOS/HauppaugeRecorder" \
+                   "build/HauppaugeRecorder.app/Contents/MacOS/ffmpeg" build/hdpvr-capture build/ffmpeg; do
             lipo "$f" -verify_arch x86_64 && lipo "$f" -verify_arch arm64
             ! otool -L "$f" | grep -q -e '@rpath/' -e libusb
           done
           # the Intel slice must still load on 10.9 (the Apple silicon slice is 11.0 by definition)
-          for f in "build/HD PVR Capture.app/Contents/MacOS/HD PVR Capture" build/hdpvr-capture; do
+          for f in "build/HauppaugeRecorder.app/Contents/MacOS/HauppaugeRecorder" build/hdpvr-capture; do
             otool -arch x86_64 -l "$f" | grep -A2 LC_VERSION_MIN_MACOSX | grep -q 'version 10.9'
           done
-          codesign -v --strict "build/HD PVR Capture.app"
+          codesign -v --strict "build/HauppaugeRecorder.app"
       - name: Package
         run: |
           mkdir -p out/stage
-          cp -R "build/HD PVR Capture.app" build/hdpvr-capture build/ffmpeg resources/licenses README.md out/stage/
-          ditto -c -k --keepParent "build/HD PVR Capture.app" out/HauppaugeRecorder-macos-universal-app.zip
+          cp -R "build/HauppaugeRecorder.app" build/hdpvr-capture build/ffmpeg resources/licenses README.md out/stage/
+          ditto -c -k --keepParent "build/HauppaugeRecorder.app" out/HauppaugeRecorder-macos-universal-app.zip
           tar -C out/stage -czf out/HauppaugeRecorder-macos-universal.tar.gz .
           rm -rf out/stage
       - uses: actions/upload-artifact@v4
