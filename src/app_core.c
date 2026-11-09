@@ -47,6 +47,11 @@ static void mono_ts(struct timespec *ts)
 }
 
 #define RING_FRAMES 32768      /* power of two, ~680 ms at 48 kHz */
+/* Decoded preview frames are queued and shown one per frame interval, because
+ * ffmpeg hands them over in bursts as the USB data arrives. */
+#define FRAME_QUEUE 8
+#define QUEUE_KEEP 5 /* more queued than this: the preview has fallen behind, skip ahead */
+#define QUEUE_START 3 /* frames in hand before the preview starts playing */
 #define AUDIO_RATE 48000
 #define REC_QUEUE (64u << 20)  /* ~25 s at the highest bitrate, for a slow disk */
 #define RESTART_GAP_MS 4000    /* the firmware wants this long between a stop and the next start */
@@ -79,6 +84,7 @@ struct app {
     sink_t *rec;
     FILE *rec_file;
     int rec_synced;
+    int rec_wide; /* SD widescreen: the file's H.264 is flagged 16:9 (see wide_packet) */
     int64_t rec_wait_ms;
     uint8_t pkt[188], pat[188], pmt[188];
     int pkt_n, have_pat, have_pmt, pmt_pid;
@@ -86,7 +92,10 @@ struct app {
     char rec_path[1024];
 
     pthread_mutex_t frame_lock;
-    uint32_t *rgb, *spare;
+    uint32_t *rgb;          /* the frame on screen */
+    uint32_t *q[FRAME_QUEUE]; /* decoded frames waiting for their turn */
+    int q_head, q_count, q_playing;
+    int64_t q_due_us, period_us;
     int fw, fh, hd;
     uint64_t seq;
     volatile int widescreen;
@@ -102,6 +111,22 @@ struct app {
 };
 
 /* ---- small helpers ---- */
+
+static int64_t now_us(void)
+{
+#ifdef _WIN32
+    static LARGE_INTEGER f;
+    LARGE_INTEGER c;
+    if (!f.QuadPart)
+        QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return (int64_t)(c.QuadPart / f.QuadPart * 1000000 + c.QuadPart % f.QuadPart * 1000000 / f.QuadPart);
+#else
+    struct timespec ts;
+    mono_ts(&ts);
+    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+#endif
+}
 
 static int64_t now_ms(void)
 {
@@ -202,11 +227,166 @@ static void ts_packet(app_t *a, const uint8_t *p, int *start_here)
     }
 }
 
+/* ---- widescreen flag ----
+ * The HD PVR flags SD video 4:3 (sample aspect 8:9 at 720x480). With
+ * "Widescreen" on, the recording's SPS gets the 16:9 sample aspect instead
+ * (32:27), so players show it wide. Both are fixed 16-bit fields in the VUI, so
+ * the SPS keeps its size and the TS packet is patched in place. */
+
+typedef struct {
+    const uint8_t *b;
+    int n, pos; /* in bits */
+} bits_t;
+
+static unsigned get_bits(bits_t *r, int k)
+{
+    unsigned v = 0;
+    while (k--) {
+        if (r->pos >= r->n)
+            return r->pos = r->n + 1, v; /* past the end: the caller checks */
+        v = v << 1 | (r->b[r->pos >> 3] >> (7 - (r->pos & 7)) & 1);
+        r->pos++;
+    }
+    return v;
+}
+
+static unsigned get_ue(bits_t *r)
+{
+    int z = 0;
+    while (z < 32 && r->pos < r->n && !get_bits(r, 1))
+        z++;
+    return z >= 32 ? 0 : (1u << z) - 1 + get_bits(r, z);
+}
+
+static void skip_scaling_list(bits_t *r, int size)
+{
+    int last = 8, next = 8;
+    for (int j = 0; j < size && r->pos <= r->n; j++) {
+        if (next) {
+            unsigned u = get_ue(r);
+            int delta = u & 1 ? (int)(u + 1) / 2 : -(int)(u / 2);
+            next = (last + delta + 256) % 256;
+        }
+        last = next ? next : last;
+    }
+}
+
+/* nal points at the SPS NAL header, len bytes of it are in hand. 1 if patched. */
+static int sps_make_wide(uint8_t *nal, int len)
+{
+    uint8_t rbsp[96];
+    int map[96], n = 0, zeros = 0;
+    for (int i = 1; i < len && n < (int)sizeof(rbsp); i++) {
+        if (zeros >= 2 && nal[i] == 3) { /* emulation prevention byte */
+            zeros = 0;
+            continue;
+        }
+        if (zeros >= 2 && nal[i] <= 2)
+            break; /* the next start code */
+        zeros = nal[i] ? 0 : zeros + 1;
+        map[n] = i;
+        rbsp[n++] = nal[i];
+    }
+    bits_t r = { rbsp, n * 8, 0 };
+    unsigned profile = get_bits(&r, 8);
+    get_bits(&r, 16); /* constraints, level */
+    get_ue(&r);       /* sps id */
+    if (profile == 100 || profile == 110 || profile == 122 || profile == 244 || profile == 44 ||
+        profile == 83 || profile == 86 || profile == 118 || profile == 128 || profile == 138 ||
+        profile == 139 || profile == 134 || profile == 135) {
+        unsigned chroma = get_ue(&r);
+        if (chroma == 3)
+            get_bits(&r, 1);
+        get_ue(&r), get_ue(&r); /* bit depths */
+        get_bits(&r, 1);
+        if (get_bits(&r, 1)) /* scaling matrices */
+            for (int i = 0; i < (chroma == 3 ? 12 : 8); i++)
+                if (get_bits(&r, 1))
+                    skip_scaling_list(&r, i < 6 ? 16 : 64);
+    }
+    get_ue(&r); /* log2 max frame num */
+    unsigned poc = get_ue(&r);
+    if (poc == 0) {
+        get_ue(&r);
+    } else if (poc == 1) {
+        get_bits(&r, 1);
+        get_ue(&r), get_ue(&r);
+        for (unsigned i = 0, k = get_ue(&r); i < k && i < 256 && r.pos <= r.n; i++)
+            get_ue(&r);
+    }
+    get_ue(&r);       /* ref frames */
+    get_bits(&r, 1);
+    get_ue(&r), get_ue(&r); /* size in macroblocks */
+    if (!get_bits(&r, 1)) /* not frame_mbs_only */
+        get_bits(&r, 1);
+    get_bits(&r, 1);
+    if (get_bits(&r, 1)) /* cropping */
+        get_ue(&r), get_ue(&r), get_ue(&r), get_ue(&r);
+    if (!get_bits(&r, 1) || !get_bits(&r, 1)) /* no VUI, or no aspect in it */
+        return 0;
+    int at = r.pos;
+    unsigned idc = get_bits(&r, 8);
+    if (r.pos > r.n)
+        return 0;
+    /* the 4:3 sample aspects of SD and their 16:9 counterparts */
+    static const unsigned table[][4] = { { 8, 9, 32, 27 }, { 10, 11, 40, 33 }, { 12, 11, 16, 11 }, { 16, 15, 64, 45 } };
+    if (idc == 255) {
+        unsigned sw = get_bits(&r, 16), sh = get_bits(&r, 16);
+        if (r.pos > r.n)
+            return 0;
+        int i = 0;
+        while (i < 4 && !(table[i][0] == sw && table[i][1] == sh))
+            i++;
+        if (i == 4)
+            return 0; /* already wide, or not SD */
+        sw = table[i][2], sh = table[i][3];
+        for (int k = 0; k < 32; k++) { /* write the two fields back bit by bit */
+            int bit = k < 16 ? sw >> (15 - k) & 1 : sh >> (31 - k) & 1, p = at + 8 + k;
+            rbsp[p >> 3] = (uint8_t)((rbsp[p >> 3] & ~(0x80 >> (p & 7))) | bit << (7 - (p & 7)));
+        }
+    } else if (idc == 3 || idc == 2) { /* 10:11 -> 40:33, 12:11 -> 16:11 */
+        unsigned v = idc + 2;
+        for (int k = 0; k < 8; k++) {
+            int bit = v >> (7 - k) & 1, p = at + k;
+            rbsp[p >> 3] = (uint8_t)((rbsp[p >> 3] & ~(0x80 >> (p & 7))) | bit << (7 - (p & 7)));
+        }
+    } else {
+        return 0;
+    }
+    /* the new bytes must not need emulation prevention where the old ones did not */
+    for (int i = 0; i + 2 < n; i++)
+        if (!rbsp[i] && !rbsp[i + 1] && rbsp[i + 2] <= 3 && map[i + 2] == map[i] + 2)
+            return 0;
+    for (int i = 0; i < n; i++)
+        nal[map[i]] = rbsp[i];
+    return 1;
+}
+
+/* Finds an SPS in a video TS packet that starts a PES and flags it 16:9. */
+static void wide_packet(uint8_t *p)
+{
+    int pusi = p[1] & 0x40, afc = p[3] >> 4 & 3;
+    int off = 4 + (afc & 2 ? 1 + p[4] : 0);
+    if (!pusi || !(afc & 1) || off + 9 >= 188)
+        return;
+    uint8_t *pl = p + off;
+    int n = 188 - off;
+    if (pl[0] || pl[1] || pl[2] != 1 || (pl[3] & 0xf0) != 0xe0)
+        return;
+    for (int i = 9 + pl[8]; i + 3 < n; i++)
+        if (!pl[i] && !pl[i + 1] && pl[i + 2] == 1 && (pl[i + 3] & 0x1f) == 7) {
+            sps_make_wide(pl + i + 3, n - i - 3);
+            return;
+        }
+}
+
 static void on_data(const uint8_t *data, size_t len, void *user)
 {
     app_t *a = user;
     pthread_mutex_lock(&a->data_lock);
-    size_t raw_from = a->rec && a->rec_synced ? 0 : len; /* where this chunk's raw copy to the file begins */
+    /* where this chunk's raw copy to the file begins; a widescreen recording is
+     * written packet by packet instead, so its SPS can be patched */
+    size_t raw_from = a->rec && a->rec_synced && !a->rec_wide ? 0 : len;
     for (size_t i = 0; i < len; i++) {
         if (!a->pkt_n && data[i] != 0x47)
             continue; /* find the next sync byte */
@@ -219,6 +399,18 @@ static void on_data(const uint8_t *data, size_t len, void *user)
         ts_packet(a, a->pkt, waiting ? &start : NULL);
         if (waiting && !start && now_ms() - a->rec_wait_ms > 6000)
             start = 1; /* no SPS seen: start anyway, players will cope */
+        if (a->rec && a->rec_wide && (start || a->rec_synced)) {
+            if (start) {
+                if (a->have_pat)
+                    sink_push(a->rec, a->pat, 188);
+                if (a->have_pmt)
+                    sink_push(a->rec, a->pmt, 188);
+                a->rec_synced = 1;
+            }
+            wide_packet(a->pkt);
+            sink_push(a->rec, a->pkt, 188);
+            continue;
+        }
         if (start) {
             if (a->have_pat)
                 sink_push(a->rec, a->pat, 188);
@@ -241,15 +433,53 @@ static void on_data(const uint8_t *data, size_t len, void *user)
 static void on_video(const uint8_t *data, size_t len, void *user)
 {
     app_t *a = user;
-    if (len != (size_t)a->fw * a->fh * 4)
-        return;
-    memcpy(a->spare, data, len);
     pthread_mutex_lock(&a->frame_lock);
-    uint32_t *t = a->rgb;
-    a->rgb = a->spare;
-    a->spare = t;
-    a->seq++;
+    if (len == (size_t)a->fw * a->fh * 4) {
+        if (a->q_count == FRAME_QUEUE) { /* full: drop the oldest */
+            a->q_head = (a->q_head + 1) % FRAME_QUEUE;
+            a->q_count--;
+        }
+        memcpy(a->q[(a->q_head + a->q_count) % FRAME_QUEUE], data, len);
+        a->q_count++;
+    }
     pthread_mutex_unlock(&a->frame_lock);
+}
+
+/* Puts the next queued frame on screen when its time has come. frame_lock held. */
+static void advance_frame(app_t *a)
+{
+    int64_t now = now_us();
+    if (!a->q_playing) {
+        if (a->q_count < QUEUE_START) /* frames in hand absorb the decoder's unevenness */
+            return;
+        a->q_playing = 1;
+        a->q_due_us = now;
+    }
+    /* the screen asks every ~16 ms: a frame due within half of that goes now, or
+     * jitter would hold every other frame back a whole refresh */
+    if (!a->q_count || now + 8000 < a->q_due_us)
+        return;
+    while (a->q_count > QUEUE_KEEP) { /* behind: skip to stay close to live */
+        a->q_head = (a->q_head + 1) % FRAME_QUEUE;
+        a->q_count--;
+    }
+    uint32_t *t = a->rgb;
+    a->rgb = a->q[a->q_head];
+    a->q[a->q_head] = t;
+    a->q_head = (a->q_head + 1) % FRAME_QUEUE;
+    a->q_count--;
+    a->seq++;
+    /* The box's clock and ours differ a little, so follow the queue: run a few
+     * percent slow when it is nearly empty and fast when it builds up. A frame
+     * that came late starts the clock again from now rather than leaving a debt
+     * that every later frame would pay for. */
+    int64_t base = now - a->q_due_us > a->period_us / 2 ? now : a->q_due_us;
+    int64_t step = a->period_us;
+    if (a->q_count == 0)
+        step += step / 20;
+    else if (a->q_count >= QUEUE_START)
+        step -= step / 20;
+    a->q_due_us = base + step;
 }
 
 static void on_audio(const uint8_t *data, size_t len, void *user)
@@ -275,6 +505,7 @@ static void clear_frame(app_t *a)
     pthread_mutex_lock(&a->frame_lock);
     if (a->rgb)
         memset(a->rgb, 0, (size_t)a->fw * a->fh * 4);
+    a->q_head = a->q_count = a->q_playing = 0;
     a->seq++;
     pthread_mutex_unlock(&a->frame_lock);
 }
@@ -297,20 +528,29 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
     int hd = sh > 576, w = hd ? 1280 : 720, h = hd ? 720 : sh > 480 ? 576 : 480;
     pthread_mutex_lock(&a->frame_lock);
     if (w != a->fw || h != a->fh) {
-        uint32_t *n1 = calloc((size_t)w * h, 4), *n2 = calloc((size_t)w * h, 4);
-        if (n1 && n2) {
+        uint32_t *n[FRAME_QUEUE + 1];
+        int ok = 1;
+        for (int i = 0; i <= FRAME_QUEUE; i++)
+            ok &= (n[i] = calloc((size_t)w * h, 4)) != NULL;
+        if (ok) {
             free(a->rgb);
-            free(a->spare);
-            a->rgb = n1;
-            a->spare = n2;
+            a->rgb = n[FRAME_QUEUE];
+            for (int i = 0; i < FRAME_QUEUE; i++) {
+                free(a->q[i]);
+                a->q[i] = n[i];
+            }
             a->fw = w;
             a->fh = h;
         } else {
-            free(n1);
-            free(n2);
+            for (int i = 0; i <= FRAME_QUEUE; i++)
+                free(n[i]);
         }
     }
     a->hd = hd;
+    a->q_head = a->q_count = a->q_playing = 0;
+    /* the preview's frame rate: interlaced and 25/30p as is, 50/60p halved (see rate below) */
+    int out = fps >= 50 ? fps / 2 : fps > 0 ? fps : 30;
+    a->period_us = out == 30 ? 1001000 / 30 : 1000000 / out;
     a->seq++;
     pthread_mutex_unlock(&a->frame_lock);
 
@@ -385,7 +625,11 @@ static void replay(app_t *a, const char *path)
         set_state(a, APP_SEARCHING, "Cannot open %s", path);
         return;
     }
-    uint8_t buf[188 * 64];
+    /* fed like the USB reads: 16 KB at a time, at HDPVR_REPLAY_KBPS (default 8000) */
+    static uint8_t buf[16 * 1024];
+    const char *kb = getenv("HDPVR_REPLAY_KBPS");
+    int kbps = kb && atoi(kb) > 0 ? atoi(kb) : 8000;
+    int64_t t0 = now_us(), sent = 0;
     start_decoders(a, 720, 480, 60);
     pthread_mutex_lock(&a->lock);
     a->sig_w = 720, a->sig_h = 480, a->sig_fps = 60;
@@ -397,12 +641,16 @@ static void replay(app_t *a, const char *path)
             rewind(f);
             continue;
         }
-        on_data(buf, n, a);
+        sent += (int64_t)n;
+        int64_t due = t0 + sent * 8000 / kbps, wait = due - now_us();
+        if (wait > 0) {
 #ifdef _WIN32
-        Sleep(12);
+            Sleep((DWORD)(wait / 1000));
 #else
-        usleep(12000);
+            usleep((useconds_t)wait);
 #endif
+        }
+        on_data(buf, n, a);
     }
     fclose(f);
 }
@@ -459,6 +707,12 @@ static void *worker(void *arg)
             continue;
         }
 
+        /* Start the preview's ffmpeg now, while the encoder settles (hdpvr_start waits ~3 s):
+         * launching it takes a moment, and the stream would otherwise pile up behind it. */
+        hdpvr_signal_t pre = { 0, 0, 0 };
+        if (hdpvr_get_signal(a->dev, &pre) == 0 && pre.width)
+            start_decoders(a, pre.width, pre.height, pre.fps);
+
         /* wait for a picture; the source may be switched on later */
         for (;;) {
             r = hdpvr_start(a->dev, 2500, on_data, a);
@@ -467,6 +721,7 @@ static void *worker(void *arg)
             set_state(a, APP_NO_SIGNAL, "No picture on the %s input", in);
         }
         if (r) {
+            stop_decoders(a);
             if (r != HDPVR_ERR_NO_SIGNAL) {
                 set_state(a, APP_STARTING, "The HD PVR did not start: %s", hdpvr_strerror(r));
                 close_device(a);
@@ -480,7 +735,10 @@ static void *worker(void *arg)
         pthread_mutex_lock(&a->lock);
         a->sig_w = sig.width, a->sig_h = sig.height, a->sig_fps = sig.fps;
         pthread_mutex_unlock(&a->lock);
-        start_decoders(a, sig.width, sig.height, sig.fps);
+        if (!pre.width || pre.width != sig.width || pre.height != sig.height || pre.fps != sig.fps) {
+            stop_decoders(a);
+            start_decoders(a, sig.width, sig.height, sig.fps);
+        }
         set_state(a, APP_STREAMING, "%s %dx%d at %d Hz", in, sig.width, sig.height, sig.fps);
 
         int lost = 0;
@@ -555,7 +813,9 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     a->fh = 720;
     a->hd = 1;
     a->rgb = calloc((size_t)a->fw * a->fh, 4);
-    a->spare = calloc((size_t)a->fw * a->fh, 4);
+    for (int i = 0; i < FRAME_QUEUE; i++)
+        a->q[i] = calloc((size_t)a->fw * a->fh, 4);
+    a->period_us = 1001000 / 30;
 #ifndef __APPLE__
     a->out = sa_output_start(AUDIO_RATE, output_cb, a);
     if (!a->out)
@@ -591,7 +851,8 @@ void app_close(app_t *a)
     sa_output_stop(a->out);
 #endif
     free(a->rgb);
-    free(a->spare);
+    for (int i = 0; i < FRAME_QUEUE; i++)
+        free(a->q[i]);
     free(a);
 }
 
@@ -659,6 +920,7 @@ int app_get_frame(app_t *a, uint32_t *buf, int w, int h, uint64_t *seq)
 {
     int copied = 0;
     pthread_mutex_lock(&a->frame_lock);
+    advance_frame(a);
     if (a->seq != *seq && w == a->fw && h == a->fh) {
         memcpy(buf, a->rgb, (size_t)w * h * 4);
         *seq = a->seq;
@@ -929,10 +1191,14 @@ int app_record_start(app_t *a, const char *folder, char *path, int pathlen, char
         snprintf(err, (size_t)errlen, "out of memory");
         return -1;
     }
+    pthread_mutex_lock(&a->lock);
+    int wide = a->widescreen && a->sig_h > 0 && a->sig_h <= 576; /* SD only: HD is 16:9 already */
+    pthread_mutex_unlock(&a->lock);
     pthread_mutex_lock(&a->data_lock);
     a->rec = s;
     a->rec_file = f;
     a->rec_synced = 0;
+    a->rec_wide = wide;
     a->rec_wait_ms = now_ms();
     mono_ts(&a->rec_t0);
     snprintf(a->rec_path, sizeof(a->rec_path), "%s", path);

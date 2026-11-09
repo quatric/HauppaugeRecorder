@@ -39,8 +39,8 @@
 #define CTRL_TIMEOUT_MS 2000
 #define START_TIMEOUT_MS 8000 /* Encoder start: the Linux driver allows this long */
 #define BOOT_TIMEOUT_MS 10000 /* status and unlock: a box that just powered on is still booting */
-#define NXFERS          16
-#define XFER_SIZE       (64 * 1024)
+#define NXFERS          64 /* 1 MB in flight, as before */
+#define XFER_SIZE       (16 * 1024) /* ~10-20 ms of stream each, so data arrives evenly */
 #define STALL_MS        1500  /* no data for this long: restart the encoder */
 #define SETTLE_MS       3000  /* after configuring, a start sooner than ~2 s never sends data */
 #define FIRST_DATA_MS   10000 /* the encoder needs a few seconds to send its first data after a start */
