@@ -3,7 +3,8 @@
  *
  *   Windows  waveOut (audio_windows.c)
  *   Linux    ALSA, loaded at run time with dlopen (audio_alsa.c)
- *   macOS    the app plays through AVAudioEngine itself (viewer.m)
+ *   macOS    the app plays through AVAudioEngine itself (viewer.m); the build for
+ *            Mac OS X 10.3-10.8 uses the default output unit (audio_mac_legacy.c)
  */
 #ifndef HDPVR_SYSAUDIO_H
 #define HDPVR_SYSAUDIO_H

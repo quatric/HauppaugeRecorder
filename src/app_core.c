@@ -2,8 +2,9 @@
 #include "app_core.h"
 #include "decoder.h"
 #include "hdpvr.h"
+#include "monitor_ring.h"
 #include "sink.h"
-#ifndef __APPLE__
+#if !defined(__APPLE__) || defined(LEGACY_MAC) /* the old-Mac build plays through Core Audio here */
 #include "sysaudio.h"
 #endif
 
@@ -53,6 +54,14 @@ static void mono_ts(struct timespec *ts)
 #define QUEUE_KEEP 5 /* more queued than this: the preview has fallen behind, skip ahead */
 #define QUEUE_START 3 /* frames in hand before the preview starts playing */
 #define AUDIO_RATE 48000
+/* ffmpeg's output in the CPU's own byte order: pixels as 32-bit 0x00RRGGBB, samples as int16 */
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define PIX_FMT "0rgb"
+#define PCM_FMT "s16be"
+#else
+#define PIX_FMT "bgr0"
+#define PCM_FMT "s16le"
+#endif
 #define REC_QUEUE (64u << 20)  /* ~25 s at the highest bitrate, for a slow disk */
 #define RESTART_GAP_MS 4000    /* the firmware wants this long between a stop and the next start */
 #define RETRY_MS 2000
@@ -100,12 +109,11 @@ struct app {
     uint64_t seq;
     volatile int widescreen;
 
-    int16_t ring[RING_FRAMES * 2];
-    _Alignas(8) volatile uint64_t ring_w;
-    _Alignas(8) volatile uint64_t ring_r;
+    int16_t ring_frames[RING_FRAMES * 2];
+    monitor_ring_t ring;
     volatile int peak[2];
     volatile int monitor;
-#ifndef __APPLE__
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
     sa_output_t *out;
 #endif
 };
@@ -485,19 +493,7 @@ static void advance_frame(app_t *a)
 static void on_audio(const uint8_t *data, size_t len, void *user)
 {
     app_t *a = user;
-    const int16_t *s = (const int16_t *)(const void *)data;
-    int frames = (int)(len / 4), pl = 0, pr = 0;
-    uint64_t w = __atomic_load_n(&a->ring_w, __ATOMIC_ACQUIRE);
-    for (int i = 0; i < frames; i++, w++) {
-        int16_t l = s[2 * i], r = s[2 * i + 1];
-        a->ring[(w % RING_FRAMES) * 2] = l;
-        a->ring[(w % RING_FRAMES) * 2 + 1] = r;
-        if (abs(l) > pl) pl = abs(l);
-        if (abs(r) > pr) pr = abs(r);
-    }
-    __atomic_store_n(&a->ring_w, w, __ATOMIC_RELEASE);
-    if (pl > a->peak[0]) a->peak[0] = pl;
-    if (pr > a->peak[1]) a->peak[1] = pr;
+    monitor_ring_write(&a->ring, (const int16_t *)(const void *)data, (int)(len / 4), a->peak);
 }
 
 static void clear_frame(app_t *a)
@@ -526,6 +522,10 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
 {
     (void)sw; /* the height says SD or HD */
     int hd = sh > 576, w = hd ? 1280 : 720, h = hd ? 720 : sh > 480 ? 576 : 480;
+#ifdef __ppc__
+    if (hd) /* a G4/G5 is short of time to decode HD at all: a quarter of the pixels to scale and show */
+        w = 640, h = 360;
+#endif
     pthread_mutex_lock(&a->frame_lock);
     if (w != a->fw || h != a->fh) {
         uint32_t *n[FRAME_QUEUE + 1];
@@ -557,15 +557,19 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
     char vf[256], rate[48] = "";
     if (fps >= 50) /* 720p60/50: half the frames are plenty for a preview */
         snprintf(rate, sizeof(rate), ",fps=%s", fps == 50 ? "25" : "30000/1001");
-    snprintf(vf, sizeof(vf), "yadif=mode=send_frame:parity=auto:deint=interlaced,scale=%d:%d%s,format=bgr0",
+    snprintf(vf, sizeof(vf), "yadif=mode=send_frame:parity=auto:deint=interlaced,scale=%d:%d%s,format=" PIX_FMT,
              a->fw, a->fh, rate);
     const char *vargs[] = { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "nobuffer",
+#ifdef __ppc__
+                            /* PowerPC: decode faster at some cost in picture quality; it is only the preview */
+                            "-skip_loop_filter", "all", "-flags2", "fast",
+#endif
                             "-probesize", "400000", "-analyzeduration", "1000000", "-f", "mpegts", "-i", "pipe:0",
-                            "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr0",
+                            "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-f", "rawvideo", "-pix_fmt", PIX_FMT,
                             "-flush_packets", "1", "pipe:1", NULL };
     const char *aargs[] = { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "nobuffer",
                             "-probesize", "400000", "-analyzeduration", "1000000", "-f", "mpegts", "-i", "pipe:0",
-                            "-map", "0:a:0", "-vn", "-sn", "-ac", "2", "-ar", "48000", "-f", "s16le",
+                            "-map", "0:a:0", "-vn", "-sn", "-ac", "2", "-ar", "48000", "-f", PCM_FMT,
                             "-flush_packets", "1", "pipe:1", NULL };
     char err[300] = "";
     decoder_t *v = dec_start(vargs, (size_t)a->fw * a->fh * 4, on_video, a, err, sizeof(err));
@@ -577,6 +581,7 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
     } else {
         set_problem(a, NULL);
     }
+    monitor_ring_restart(&a->ring);
     pthread_mutex_lock(&a->data_lock);
     a->vdec = v;
     a->adec = au;
@@ -789,7 +794,7 @@ static void *worker(void *arg)
 
 /* ---- public: lifecycle and state ---- */
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
 static void output_cb(int16_t *out, int frames, void *user) { app_audio_render(user, out, frames); }
 #endif
 
@@ -809,6 +814,8 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     a->src.quality = clampi(quality, 0, APP_QUALITIES - 1);
     a->src.pal = pal != 0;
     a->monitor = 1;
+    a->ring.frames = a->ring_frames;
+    a->ring.size = RING_FRAMES;
     a->fw = 1280;
     a->fh = 720;
     a->hd = 1;
@@ -816,7 +823,7 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     for (int i = 0; i < FRAME_QUEUE; i++)
         a->q[i] = calloc((size_t)a->fw * a->fh, 4);
     a->period_us = 1001000 / 30;
-#ifndef __APPLE__
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
     a->out = sa_output_start(AUDIO_RATE, output_cb, a);
     if (!a->out)
         snprintf(a->problem, sizeof(a->problem), "No audio output device for monitoring");
@@ -847,7 +854,7 @@ void app_close(app_t *a)
     pthread_cond_broadcast(&a->cv);
     pthread_mutex_unlock(&a->lock);
     pthread_join(a->worker, NULL);
-#ifndef __APPLE__
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
     sa_output_stop(a->out);
 #endif
     free(a->rgb);
@@ -954,31 +961,11 @@ void app_peaks(app_t *a, double db[2])
 
 void app_set_monitor(app_t *a, int on) { a->monitor = on; }
 
-/* about 80 ms behind the decoder, resynced if it drifts */
+/* 150 ms behind the decoder: ffmpeg hands the sound over a few AAC frames at a time as the
+ * transport stream interleaves it, and the cushion has to outlast the gaps (see monitor_ring.h) */
 static int render(app_t *a, int16_t *out, float *L, float *R, int frames)
 {
-    const uint64_t target = AUDIO_RATE * 80 / 1000, maxlag = AUDIO_RATE / 3;
-    uint64_t w = __atomic_load_n(&a->ring_w, __ATOMIC_ACQUIRE), rd = a->ring_r;
-    if (w - rd > maxlag || rd > w)
-        rd = w > target ? w - target : 0;
-    int any = 0;
-    for (int i = 0; i < frames; i++) {
-        int16_t l = 0, r = 0;
-        if (rd < w) {
-            if (a->monitor) {
-                l = a->ring[(rd % RING_FRAMES) * 2];
-                r = a->ring[(rd % RING_FRAMES) * 2 + 1];
-                any = 1;
-            }
-            rd++;
-        }
-        if (out)
-            out[2 * i] = l, out[2 * i + 1] = r;
-        else
-            L[i] = l / 32768.0f, R[i] = r / 32768.0f;
-    }
-    a->ring_r = rd;
-    return any;
+    return monitor_ring_read(&a->ring, AUDIO_RATE * 150 / 1000, out, L, R, frames, a->monitor ? 1.0f : 0.0f);
 }
 
 int app_audio_render(app_t *a, int16_t *out, int frames) { return render(a, out, NULL, NULL, frames); }

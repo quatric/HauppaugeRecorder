@@ -82,11 +82,15 @@ int usbi_cond_timedwait(usbi_cond_t *cond,
 
 unsigned long usbi_get_tid(void)
 {
+#ifndef LIBUSB_NO_TLS /* patched: Mac OS X 10.4's i386 ABI has no thread-local storage */
 	static _Thread_local unsigned long tl_tid;
+#endif
 	unsigned long tid;
 
+#ifndef LIBUSB_NO_TLS
 	if (tl_tid)
 		return tl_tid;
+#endif
 
 #if defined(__ANDROID__)
 	tid = (unsigned long)gettid();
@@ -122,5 +126,9 @@ unsigned long usbi_get_tid(void)
 		tid = (unsigned long)(uintptr_t)pthread_self();
 	}
 
+#ifdef LIBUSB_NO_TLS
+	return tid;
+#else
 	return tl_tid = tid;
+#endif
 }

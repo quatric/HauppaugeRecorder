@@ -10,6 +10,7 @@
 #   macos-x86_64 macos-arm64                    (Xcode clang; lipo them together)
 #   x86_64-windows x86-windows aarch64-windows  ($WIN_PREFIX_<arch>-clang/gcc, e.g. llvm-mingw msvcrt)
 #   x86_64-linux x86-linux aarch64-linux arm-linux   (zig cc, static musl)
+#   legacy-ppc legacy-i386                      (Mac OS X 10.3/10.4, from scripts/build-legacy-mac.sh)
 # nasm is needed for the x86 targets.
 set -e
 cd "$(dirname "$0")/.."
@@ -40,8 +41,8 @@ FEATURES="--disable-everything --disable-autodetect --disable-doc --disable-debu
   --enable-demuxer=mpegts
   --enable-parser=h264,aac,ac3
   --enable-decoder=h264,aac,ac3
-  --enable-encoder=rawvideo,pcm_s16le
-  --enable-muxer=rawvideo,pcm_s16le
+  --enable-encoder=rawvideo,pcm_s16le,pcm_s16be
+  --enable-muxer=rawvideo,pcm_s16le,pcm_s16be
   --enable-filter=yadif,scale,fps,format,null,anull,aformat,aresample"
 
 case $TARGET in
@@ -51,6 +52,26 @@ macos-*)
   CROSS="--target-os=darwin --arch=$arch --enable-cross-compile
     --cc=clang --extra-cflags=-arch\ $arch\ -mmacosx-version-min=$min
     --extra-ldflags=-arch\ $arch\ -mmacosx-version-min=$min"
+  ;;
+legacy-*)
+  # Mac OS X 10.3 (PowerPC) and 10.4 (Intel), built in the cross toolchain of
+  # scripts/build-legacy-mac.sh, which sets LEGACY_CC_<arch> and LEGACY_LIBS.
+  arch=${TARGET#legacy-}
+  eval lcc=\$LEGACY_CC_$arch
+  [ -n "$lcc" ] || { echo "LEGACY_CC_$arch is not set" >&2; exit 1; }
+  case $arch in ppc) farch=ppc; min=10.3 ;; i386) farch=x86_32; min=10.4 ;; esac
+  mkdir -p "$BLD"
+  printf '#!/bin/sh\nexec %s "$@"\n' "$lcc" > "$BLD/legacy-cc"
+  chmod +x "$BLD/legacy-cc"
+  CROSS="--target-os=darwin --arch=$farch --enable-cross-compile --cc=$BLD/legacy-cc
+    --ar=${LEGACY_AR:-ar} --ranlib=${LEGACY_RANLIB:-ranlib} --nm=${LEGACY_NM:-nm} --strip=${LEGACY_STRIP:-strip}
+    --extra-cflags=-mmacosx-version-min=$min --extra-ldflags=-mmacosx-version-min=$min"
+  # configure finds CoreVideo and GCC's libatomic and links them although nothing here uses them;
+  # Mac OS X 10.3 has neither (the atomics come from LEGACY_LIBS)
+  CROSS="$CROSS --extra-ldflags=-Wl,-dead_strip_dylibs"
+  [ -n "$LEGACY_LIBS" ] && CROSS="$CROSS --extra-libs=$LEGACY_LIBS"
+  [ $arch = ppc ] && CROSS="$CROSS --cpu=g3 --enable-altivec --enable-runtime-cpudetect"
+  [ $arch = i386 ] && CROSS="$CROSS --cpu=pentium-m --disable-inline-asm"
   ;;
 *-windows)
   arch=${TARGET%-windows}

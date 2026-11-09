@@ -46,6 +46,11 @@ default output; from 10.15 it uses AVAudioEngine.
 ## Platforms
 
 * **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.9 or later.
+* **Older Macs**: `HauppaugeRecorder-macos-legacy-ppc-i386-app.zip` holds **HauppaugeRecorder Legacy**
+  for PowerPC on Mac OS X 10.3.9 or later and Intel on 10.4 or later (OpenGL preview, the old Core Audio
+  output). Recording only copies the HD PVR's stream, so it is light on any Mac, but decoding the
+  preview is not: a PowerPC Mac shows an HD source at 640x360 with the deblocking filter off, and needs a
+  fast G4 or a G5 even so. Not tested on real old hardware yet; reports are welcome.
 * **Linux**: the kernel's `hdpvr` driver is detached automatically while recording. Allow access
   with a udev rule: `SUBSYSTEM=="usb", ATTR{idVendor}=="2040", MODE="0666"`.
 * **Windows**: 7 and later, on x86_64, x86 and Arm. The setup program installs `hdpvr-capture` and
@@ -67,12 +72,16 @@ make test SAMPLE=recording.ts   # engine test without a device
 scripts/build-all.sh     # Windows and Linux, with Zig: dist/<target>/
 ```
 
+`scripts/build-legacy-mac.sh` builds the PowerPC and i386 app for old Macs in the `powerpc-apple-darwin8`
+cross toolchain (`ghcr.io/variantxyz/gcc-powerpc-apple-darwin8:build-gcc-14.2-MacOSXSDK10.4u`, with clang,
+nasm and pkg-config added), as the release workflow does.
+
 Zig links the Universal CRT, which a stock Windows 7 lacks. For Windows 7 builds, point
 `WIN_CC_x86_64`, `WIN_CC_x86` (and optionally `WIN_CC_aarch64`) at an msvcrt MinGW-w64 compiler such
 as [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)'s msvcrt release, and set `LIBUSBK_DIR` to
 the folder `scripts/fetch-libusbk.sh` prints to include the libusbK fallback driver. Pushing a `v*`
-tag runs `.github/workflows/release.yml`, which does all of this and publishes the macOS tarball,
-the Linux tarballs, and the Windows zips and setup programs.
+tag runs `.github/workflows/release.yml`, which does all of this and publishes the macOS tarballs
+(including the legacy one), the Linux tarballs, and the Windows zips and setup programs.
 
 ## How it works
 

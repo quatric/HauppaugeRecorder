@@ -11,6 +11,7 @@
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CoreVideo/CoreVideo.h>
 
 #include "app_core.h"
 #include "hdpvr.h"
@@ -155,16 +156,24 @@ static NSTextField *make_label(NSString *s)
     return l;
 }
 
+static char kCheckbox;
+
 static NSButton *make_button(NSString *title, id target, SEL action, BOOL checkbox)
 {
-    if (@available(macOS 10.12, *))
-        return checkbox ? [NSButton checkboxWithTitle:title target:target action:action]
-                        : [NSButton buttonWithTitle:title target:target action:action];
+    if (@available(macOS 10.12, *)) {
+        NSButton *b = checkbox ? [NSButton checkboxWithTitle:title target:target action:action]
+                               : [NSButton buttonWithTitle:title target:target action:action];
+        if (checkbox)
+            objc_setAssociatedObject(b, &kCheckbox, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return b;
+    }
     NSButton *b = [NSButton new];
+    b.font = [NSFont systemFontOfSize:NSFont.systemFontSize];
     b.title = title;
     b.target = target;
     b.action = action;
     if (checkbox) {
+        objc_setAssociatedObject(b, &kCheckbox, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [b setButtonType:NSButtonTypeSwitch];
     } else {
         [b setButtonType:NSButtonTypeMomentaryPushIn];
@@ -214,6 +223,17 @@ static NSSize natural_size(NSView *v)
     /* a label's cell adds the few points of padding its intrinsic width leaves out */
     if ([v isKindOfClass:NSTextField.class])
         s.width = MAX(s.width, [[(NSTextField *)v cell] cellSize].width);
+    /* 10.9 to 10.11 measure checkbox and button titles a few points short, which cut off their last
+     * letter ("Widescree"): measure the title itself and add the box or bezel around it */
+    if ([v isKindOfClass:NSPopUpButton.class]) {
+        s.width = MAX(s.width, [[(NSPopUpButton *)v cell] cellSize].width);
+    } else if ([v isKindOfClass:NSButton.class]) {
+        NSButton *b = (NSButton *)v;
+        BOOL box = objc_getAssociatedObject(b, &kCheckbox) != nil;
+        CGFloat title = ceil([b.attributedTitle size].width);
+        CGFloat image = b.image && b.imagePosition != NSNoImage ? b.image.size.width + 4 : 0;
+        s.width = MAX(s.width, MAX([b.cell cellSize].width, title + image + (box ? 24 : 28)));
+    }
     if (s.width < 0)
         s.width = v.frame.size.width;
     if (s.height < 0)
@@ -434,9 +454,10 @@ static app_t *g_app;
     id _engine; /* AVAudioEngine, 10.15 and later only */
     AudioUnit _outputUnit; /* monitor output before 10.15 (no AVAudioSourceNode) */
 
-    uint32_t *_frame;
-    int _fw, _fh;
+    int _fw, _fh;   /* display link thread only */
     uint64_t _seq;
+    CVDisplayLinkRef _link;
+    volatile int _showing; /* a frame is on its way to the main thread */
 
     NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup;
     NSButton *_palCheck, *_wideCheck, *_monitorCheck, *_recordButton, *_folderButton;
@@ -474,9 +495,20 @@ static app_t *g_app;
     [self startAudio];
     [self tick];
 
-    _frameTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60 target:self selector:@selector(pollFrame)
-                                                 userInfo:nil repeats:YES];
-    [NSRunLoop.mainRunLoop addTimer:_frameTimer forMode:NSRunLoopCommonModes];
+    /* The display link asks for a frame on every screen refresh, so a new picture lands on the refresh it
+     * is due for. A timer drifts against the refresh and every so often shows a frame twice. */
+    if (CVDisplayLinkCreateWithActiveCGDisplays(&_link) == kCVReturnSuccess &&
+        CVDisplayLinkSetOutputCallback(_link, display_link_cb, (__bridge void *)self) == kCVReturnSuccess &&
+        CVDisplayLinkStart(_link) == kCVReturnSuccess) {
+        [self followScreen];
+    } else {
+        if (_link)
+            CVDisplayLinkRelease(_link);
+        _link = NULL;
+        _frameTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60 target:self selector:@selector(pollFrame)
+                                                     userInfo:nil repeats:YES];
+        [NSRunLoop.mainRunLoop addTimer:_frameTimer forMode:NSRunLoopCommonModes];
+    }
     _uiTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 20 target:self selector:@selector(tick)
                                               userInfo:nil repeats:YES];
     [NSRunLoop.mainRunLoop addTimer:_uiTimer forMode:NSRunLoopCommonModes];
@@ -822,33 +854,75 @@ static void rec_done(void *user, int ok, const char *path)
 
 /* ---- frames and the UI timer ---- */
 
+static void free_frame(void *info, const void *data, size_t size)
+{
+    (void)info, (void)size;
+    free((void *)data);
+}
+
+static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now, const CVTimeStamp *out,
+                                CVOptionFlags flags, CVOptionFlags *flags_out, void *ctx)
+{
+    (void)link, (void)now, (void)out, (void)flags, (void)flags_out;
+    @autoreleasepool {
+        [(__bridge AppDelegate *)ctx pollFrame];
+    }
+    return kCVReturnSuccess;
+}
+
+- (void)windowDidChangeScreen:(NSNotification *)note
+{
+    (void)note;
+    [self followScreen];
+}
+
+/* the display link follows the refresh of the screen the window is on */
+- (void)followScreen
+{
+    NSNumber *screen = _window.screen.deviceDescription[@"NSScreenNumber"];
+    if (_link && screen)
+        CVDisplayLinkSetCurrentCGDisplay(_link, (CGDirectDisplayID)screen.unsignedIntValue);
+}
+
+/* On the display link's thread (or the fallback timer): takes the frame that is due, if it is new, and
+ * hands it to the main thread as an image. */
 - (void)pollFrame
 {
+    if (!g_app || __atomic_load_n(&_showing, __ATOMIC_ACQUIRE))
+        return; /* the main thread is still busy with the last one */
     int w, h;
     app_frame_size(g_app, &w, &h);
     if (w != _fw || h != _fh) {
-        free(_frame);
-        _frame = calloc((size_t)w * h, 4);
         _fw = w;
         _fh = h;
         _seq = 0;
     }
-    if (!_frame || !app_get_frame(g_app, _frame, w, h, &_seq))
+    size_t bytes = (size_t)w * h * 4;
+    uint32_t *buf = malloc(bytes);
+    if (!buf)
         return;
+    if (!app_get_frame(g_app, buf, w, h, &_seq)) {
+        free(buf);
+        return;
+    }
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CFDataRef data = CFDataCreate(NULL, (const UInt8 *)_frame, (CFIndex)w * h * 4);
-    CGDataProviderRef dp = CGDataProviderCreateWithCFData(data);
+    CGDataProviderRef dp = CGDataProviderCreateWithData(NULL, buf, bytes, free_frame);
     CGImageRef img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4, cs,
                                    kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaNoneSkipFirst, dp, NULL,
                                    false, kCGRenderingIntentDefault);
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    _preview.picture.contents = (__bridge id)img;
-    [CATransaction commit];
-    CGImageRelease(img);
     CGDataProviderRelease(dp);
-    CFRelease(data);
     CGColorSpaceRelease(cs);
+    if (!img)
+        return;
+    __atomic_store_n(&_showing, 1, __ATOMIC_RELEASE);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        self->_preview.picture.contents = (__bridge id)img;
+        [CATransaction commit];
+        CGImageRelease(img);
+        __atomic_store_n(&self->_showing, 0, __ATOMIC_RELEASE);
+    });
 }
 
 - (void)tick
@@ -989,6 +1063,11 @@ static OSStatus output_unit_render(void *ref, AudioUnitRenderActionFlags *flags,
 
 - (void)applicationWillTerminate:(NSNotification *)note
 {
+    if (_link) {
+        CVDisplayLinkStop(_link);
+        CVDisplayLinkRelease(_link);
+        _link = NULL;
+    }
     [_frameTimer invalidate];
     [_uiTimer invalidate];
     if (@available(macOS 10.15, *))

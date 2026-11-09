@@ -13,7 +13,9 @@
 #else
 #include <fcntl.h>
 #include <signal.h>
+#ifndef LEGACY_MAC
 #include <spawn.h>
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -245,6 +247,24 @@ static int spawn(decoder_t *d, const char *ffmpeg, const char *const *args, char
         argv[n++] = args[i];
     argv[n] = NULL;
 
+#ifdef LEGACY_MAC
+    /* Mac OS X 10.3/10.4 have no posix_spawn (10.5) */
+    int rc = 0;
+    pid_t pid = fork();
+    if (pid == 0) {
+        int nul = open("/dev/null", O_WRONLY);
+        dup2(ip[0], 0);
+        dup2(op[1], 1);
+        if (nul >= 0)
+            dup2(nul, 2);
+        execv(ffmpeg, (char *const *)argv);
+        _exit(127);
+    }
+    if (pid < 0)
+        rc = errno;
+    else
+        d->pid = pid;
+#else
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_adddup2(&fa, ip[0], 0);
@@ -252,6 +272,7 @@ static int spawn(decoder_t *d, const char *ffmpeg, const char *const *args, char
     posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
     int rc = posix_spawn(&d->pid, ffmpeg, &fa, NULL, (char *const *)argv, environ);
     posix_spawn_file_actions_destroy(&fa);
+#endif
     close(ip[0]);
     close(op[1]);
     if (rc) {
