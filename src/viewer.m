@@ -15,6 +15,80 @@
 #include "app_core.h"
 #include "hdpvr.h"
 
+/* ---- AudioComponent / AudioUnit calls, looked up at run time ----
+ * Current SDKs bind these functions to AudioToolbox, but older macOS (10.9 and 10.10) exports
+ * them from AudioUnit.framework instead, so a direct call cannot be bound there and dyld kills
+ * the app the first time one runs. Look them up by name, wherever this macOS keeps them. */
+#include <dlfcn.h>
+
+static void *au_sym(const char *name)
+{
+    static void *au_lib;
+    static int tried;
+    if (!tried) {
+        tried = 1;
+        au_lib = dlopen("/System/Library/Frameworks/AudioUnit.framework/AudioUnit", RTLD_LAZY | RTLD_GLOBAL);
+    }
+    void *f = au_lib ? dlsym(au_lib, name) : NULL;
+    return f ? f : dlsym(RTLD_DEFAULT, name);
+}
+
+typedef AudioComponent (*au_find_next_t)(AudioComponent, const AudioComponentDescription *);
+typedef OSStatus (*au_instance_new_t)(AudioComponent, AudioComponentInstance *);
+typedef OSStatus (*au_unit_fn_t)(AudioUnit); /* Dispose, Initialize, OutputUnitStart/Stop */
+typedef OSStatus (*au_set_property_t)(AudioUnit, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, const void *,
+                                      UInt32);
+
+static AudioComponent au_find_next(AudioComponent c, const AudioComponentDescription *d)
+{
+    static au_find_next_t f;
+    if (!f)
+        f = (au_find_next_t)au_sym("AudioComponentFindNext");
+    return f ? f(c, d) : NULL;
+}
+static OSStatus au_instance_new(AudioComponent c, AudioComponentInstance *out)
+{
+    static au_instance_new_t f;
+    if (!f)
+        f = (au_instance_new_t)au_sym("AudioComponentInstanceNew");
+    return f ? f(c, out) : kAudio_UnimplementedError;
+}
+static OSStatus au_set_property(AudioUnit u, AudioUnitPropertyID id, AudioUnitScope sc, AudioUnitElement el,
+                                const void *data, UInt32 size)
+{
+    static au_set_property_t f;
+    if (!f)
+        f = (au_set_property_t)au_sym("AudioUnitSetProperty");
+    return f ? f(u, id, sc, el, data, size) : kAudio_UnimplementedError;
+}
+static OSStatus au_unit_call(const char *name, au_unit_fn_t *cache, AudioUnit u)
+{
+    if (!*cache)
+        *cache = (au_unit_fn_t)au_sym(name);
+    return *cache ? (*cache)(u) : kAudio_UnimplementedError;
+}
+static OSStatus au_instance_dispose(AudioComponentInstance u)
+{
+    static au_unit_fn_t f;
+    return au_unit_call("AudioComponentInstanceDispose", &f, u);
+}
+static OSStatus au_initialize(AudioUnit u)
+{
+    static au_unit_fn_t f;
+    return au_unit_call("AudioUnitInitialize", &f, u);
+}
+static OSStatus au_output_start(AudioUnit u)
+{
+    static au_unit_fn_t f;
+    return au_unit_call("AudioOutputUnitStart", &f, u);
+}
+static OSStatus au_output_stop(AudioUnit u)
+{
+    static au_unit_fn_t f;
+    return au_unit_call("AudioOutputUnitStop", &f, u);
+}
+
+
 /* ---- AppKit helpers: the modern convenience constructors need 10.12+, SF Symbols 11+ ---- */
 
 /* ---- 10.9 compatibility: the API added in 10.10 and 10.11 is used only where it exists ---- */
@@ -868,8 +942,8 @@ static OSStatus output_unit_render(void *ref, AudioUnitRenderActionFlags *flags,
     /* macOS 10.11-10.14: the default output unit, which converts the rate itself */
     AudioComponentDescription desc = { kAudioUnitType_Output, kAudioUnitSubType_DefaultOutput,
                                        kAudioUnitManufacturer_Apple, 0, 0 };
-    AudioComponent comp = AudioComponentFindNext(NULL, &desc);
-    OSStatus st = comp ? AudioComponentInstanceNew(comp, &_outputUnit) : -1;
+    AudioComponent comp = au_find_next(NULL, &desc);
+    OSStatus st = comp ? au_instance_new(comp, &_outputUnit) : -1;
     if (st == noErr) {
         AudioStreamBasicDescription f = {
             .mSampleRate = 48000,
@@ -879,19 +953,19 @@ static OSStatus output_unit_render(void *ref, AudioUnitRenderActionFlags *flags,
             .mChannelsPerFrame = 2, .mBitsPerChannel = 32,
         };
         AURenderCallbackStruct cb = { output_unit_render, NULL };
-        st = AudioUnitSetProperty(_outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &f,
+        st = au_set_property(_outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &f,
                                   sizeof(f));
         if (st == noErr)
-            st = AudioUnitSetProperty(_outputUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input,
+            st = au_set_property(_outputUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input,
                                       0, &cb, sizeof(cb));
         if (st == noErr)
-            st = AudioUnitInitialize(_outputUnit);
+            st = au_initialize(_outputUnit);
         if (st == noErr)
-            st = AudioOutputUnitStart(_outputUnit);
+            st = au_output_start(_outputUnit);
     }
     if (st != noErr) {
         if (_outputUnit)
-            AudioComponentInstanceDispose(_outputUnit);
+            au_instance_dispose(_outputUnit);
         _outputUnit = NULL;
         NSLog(@"audio output failed (error %d)", (int)st);
     }
@@ -920,8 +994,8 @@ static OSStatus output_unit_render(void *ref, AudioUnitRenderActionFlags *flags,
     if (@available(macOS 10.15, *))
         [(AVAudioEngine *)_engine stop];
     if (_outputUnit) {
-        AudioOutputUnitStop(_outputUnit);
-        AudioComponentInstanceDispose(_outputUnit);
+        au_output_stop(_outputUnit);
+        au_instance_dispose(_outputUnit);
         _outputUnit = NULL;
     }
     app_close(g_app); /* finishes a recording still in progress */
