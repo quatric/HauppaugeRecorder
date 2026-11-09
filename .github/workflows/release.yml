@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install nasm
-      - run: make VERSION=$(case $GITHUB_REF in refs/tags/v*) echo ${GITHUB_REF_NAME#v} ;; *) echo 0.0.0-dev ;; esac)
+      - run: make VERSION=$(case $GITHUB_REF in (refs/tags/v*) echo ${GITHUB_REF_NAME#v} ;; (*) echo 0.0.0-dev ;; esac)
       - name: Check Universal 2 and macOS 10.9
         run: |
           for f in "build/HauppaugeRecorder.app/Contents/MacOS/HauppaugeRecorder" \
@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: apt-get update && apt-get install -y clang git nasm pkgconf curl xz-utils zip
-      - run: VERSION=$(case $GITHUB_REF in refs/tags/v*) echo ${GITHUB_REF_NAME#v} ;; *) echo 0.0.0-dev ;; esac) scripts/build-legacy-mac.sh
+      - run: VERSION=$(case $GITHUB_REF in (refs/tags/v*) echo ${GITHUB_REF_NAME#v} ;; (*) echo 0.0.0-dev ;; esac) scripts/build-legacy-mac.sh
       - name: Check PowerPC and i386
         run: |
           T=powerpc-apple-darwin8
