@@ -35,9 +35,17 @@ The output is a standard MPEG transport stream (H.264 video, AAC or AC-3 audio) 
 and most editors open directly. If the encoder stops sending (the firmware does this now and then),
 it is restarted after four seconds, as the Windows driver does.
 
+## HD PVR Capture (the app)
+
+macOS and Windows also get **HD PVR Capture**, a window with a live preview, a level meter, a
+Record button with a timer, a snapshot button and a choice of recording folder. It shows the
+picture and plays the sound through a small bundled ffmpeg (decoding only), and records the same
+transport stream as `hdpvr-capture`. On macOS 10.9 to 10.14 the sound goes straight to Core Audio's
+default output; from 10.15 it uses AVAudioEngine.
+
 ## Platforms
 
-* **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.11 or later.
+* **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.9 or later.
 * **Linux**: the kernel's `hdpvr` driver is detached automatically while recording. Allow access
   with a udev rule: `SUBSYSTEM=="usb", ATTR{idVendor}=="2040", MODE="0666"`.
 * **Windows**: 7 and later, on x86_64, x86 and Arm. The setup program installs `hdpvr-capture` and
@@ -54,7 +62,8 @@ it is restarted after four seconds, as the Windows driver does.
 ## Build
 
 ```bash
-make                     # macOS: build/hdpvr-capture
+make                     # macOS: build/hdpvr-capture and "build/HD PVR Capture.app"
+make test SAMPLE=recording.ts   # engine test without a device
 scripts/build-all.sh     # Windows and Linux, with Zig: dist/<target>/
 ```
 

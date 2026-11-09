@@ -1,0 +1,17 @@
+The ffmpeg program included with HD PVR Capture is FFmpeg 7.1.5
+(https://ffmpeg.org), licensed under the GNU Lesser General Public License
+version 2.1 or later (see FFmpeg-COPYING.LGPLv2.1.txt). HD PVR Capture runs it
+as a separate program to decode the HD PVR's stream for the preview picture
+and the sound; recordings are the HD PVR's own stream and do not go through it.
+
+It is an unmodified FFmpeg built with only the parts the preview uses:
+  configure --disable-everything --disable-autodetect --disable-network
+            --enable-protocol=file,pipe --enable-demuxer=mpegts
+            --enable-parser=h264,aac,ac3 --enable-decoder=h264,aac,ac3
+            --enable-encoder=rawvideo,pcm_s16le --enable-muxer=rawvideo,pcm_s16le
+            --enable-filter=yadif,scale,fps,format,null,anull,aformat,aresample
+The exact build script is scripts/build-ffmpeg.sh in the HauppaugeRecorder
+source. The FFmpeg source code is available at
+https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz
+You may replace this ffmpeg with any other build: put it next to HD PVR
+Capture (inside the app on macOS), or set HDPVR_FFMPEG to its path.

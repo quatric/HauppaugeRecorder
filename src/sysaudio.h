@@ -1,0 +1,19 @@
+/*
+ * Playback to the default output device, for monitoring the HD PVR's sound.
+ *
+ *   Windows  waveOut (audio_windows.c)
+ *   Linux    ALSA, loaded at run time with dlopen (audio_alsa.c)
+ *   macOS    the app plays through AVAudioEngine itself (viewer.m)
+ */
+#ifndef HDPVR_SYSAUDIO_H
+#define HDPVR_SYSAUDIO_H
+
+#include <stdint.h>
+
+/* cb fills `frames` interleaved 16-bit stereo frames from the audio thread. */
+typedef struct sa_output sa_output_t;
+typedef void (*sa_output_cb)(int16_t *out, int frames, void *user);
+sa_output_t *sa_output_start(int rate, sa_output_cb cb, void *user);
+void sa_output_stop(sa_output_t *out);
+
+#endif
