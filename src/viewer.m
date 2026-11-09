@@ -18,10 +18,24 @@
 
 /* ---- 10.9 compatibility: the API added in 10.10 and 10.11 is used only where it exists ---- */
 
+/* NSStackView's +stackViewWithViews: is 10.12 and -setCustomSpacing:afterView: is 10.11; -setViews:inGravity: is 10.9 */
+static NSStackView *stack(NSArray<NSView *> *views)
+{
+    NSStackView *s = [[NSStackView alloc] initWithFrame:NSZeroRect];
+    [s setViews:views inGravity:NSStackViewGravityLeading];
+    return s;
+}
+
+static void gap_after(NSStackView *s, CGFloat gap, NSView *v)
+{
+    if ([s respondsToSelector:@selector(setCustomSpacing:afterView:)])
+        [s setCustomSpacing:gap afterView:v];
+}
+
 static NSColor *label_color(BOOL secondary)
 {
     if (@available(macOS 10.10, *))
-        return secondary ? label_color(YES) : NSColor.labelColor;
+        return secondary ? [NSColor secondaryLabelColor] : [NSColor labelColor];
     return secondary ? NSColor.disabledControlTextColor : NSColor.controlTextColor;
 }
 
@@ -308,14 +322,14 @@ static app_t *g_app;
     set_active(mk(_folderButton, NSLayoutAttributeWidth, NSLayoutRelationLessThanOrEqual, nil, 0, 1, 200), YES);
     [self updateFolderButton];
 
-    NSStackView *row1 = [NSStackView stackViewWithViews:@[
+    NSStackView *row1 = stack(@[
         [self label:@"Input"], _inputPopup, _palCheck, [self label:@"Audio"], _audioPopup, _wideCheck,
         [self label:@"Quality"], _qualityPopup, [self label:@"Save to"], _folderButton
-    ]];
+    ]);
     row1.spacing = 8;
-    [row1 setCustomSpacing:16 afterView:_palCheck];
-    [row1 setCustomSpacing:16 afterView:_wideCheck];
-    [row1 setCustomSpacing:16 afterView:_qualityPopup];
+    gap_after(row1, 16, _palCheck);
+    gap_after(row1, 16, _wideCheck);
+    gap_after(row1, 16, _qualityPopup);
 
     /* row 2: record button, time, meters, monitor, status */
     _recordButton = make_button(@"Record", self, @selector(toggleRecord:), NO);
@@ -332,10 +346,10 @@ static app_t *g_app;
 
     _meterL = [self meter];
     _meterR = [self meter];
-    NSStackView *meters = [NSStackView stackViewWithViews:@[
-        [NSStackView stackViewWithViews:@[ [self label:@"L"], _meterL ]],
-        [NSStackView stackViewWithViews:@[ [self label:@"R"], _meterR ]]
-    ]];
+    NSStackView *meters = stack(@[
+        stack(@[ [self label:@"L"], _meterL ]),
+        stack(@[ [self label:@"R"], _meterR ])
+    ]);
     meters.orientation = NSUserInterfaceLayoutOrientationVertical;
     meters.spacing = 2;
     meters.alignment = NSLayoutAttributeLeading;
@@ -350,10 +364,10 @@ static app_t *g_app;
                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     NSStackView *row2 =
-        [NSStackView stackViewWithViews:@[ _recordButton, _timeLabel, meters, _monitorCheck, _statusLabel ]];
+        stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, _statusLabel ]);
     row2.spacing = 16;
 
-    NSStackView *bar = [NSStackView stackViewWithViews:@[ row1, row2 ]];
+    NSStackView *bar = stack(@[ row1, row2 ]);
     bar.orientation = NSUserInterfaceLayoutOrientationVertical;
     bar.alignment = NSLayoutAttributeLeading;
     bar.spacing = 8;
