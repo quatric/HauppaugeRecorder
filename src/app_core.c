@@ -108,6 +108,8 @@ struct app {
     int fw, fh, hd;
     uint64_t seq;
     volatile int widescreen;
+    volatile int preview;   /* 0: the picture is not decoded (recording and sound go on) */
+    int dec_sw, dec_sh, dec_fps; /* what the decoders were last started for */
 
     int16_t ring_frames[RING_FRAMES * 2];
     monitor_ring_t ring;
@@ -517,10 +519,9 @@ static void stop_decoders(app_t *a)
     clear_frame(a);
 }
 
-/* One ffmpeg for the picture (scaled, deinterlaced, BGRX), one for the sound (48 kHz s16). */
-static void start_decoders(app_t *a, int sw, int sh, int fps)
+/* The ffmpeg for the picture (scaled, deinterlaced, BGRX); NULL if it would not start (err says why). */
+static decoder_t *start_video(app_t *a, int sh, int fps, char *err, int errlen)
 {
-    (void)sw; /* the height says SD or HD */
     int hd = sh > 576, w = hd ? 1280 : 720, h = hd ? 720 : sh > 480 ? 576 : 480;
 #ifdef __ppc__
     if (hd) /* a G4/G5 is short of time to decode HD at all: a quarter of the pixels to scale and show */
@@ -567,14 +568,21 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
                             "-probesize", "400000", "-analyzeduration", "1000000", "-f", "mpegts", "-i", "pipe:0",
                             "-map", "0:v:0", "-an", "-sn", "-vf", vf, "-f", "rawvideo", "-pix_fmt", PIX_FMT,
                             "-flush_packets", "1", "pipe:1", NULL };
+    return dec_start(vargs, (size_t)a->fw * a->fh * 4, on_video, a, err, errlen);
+}
+
+/* One ffmpeg for the picture (only with the preview on), one for the sound (48 kHz s16). */
+static void start_decoders(app_t *a, int sw, int sh, int fps)
+{
+    a->dec_sw = sw, a->dec_sh = sh, a->dec_fps = fps;
+    char err[300] = "";
+    decoder_t *v = a->preview ? start_video(a, sh, fps, err, sizeof(err)) : NULL;
     const char *aargs[] = { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "nobuffer",
                             "-probesize", "400000", "-analyzeduration", "1000000", "-f", "mpegts", "-i", "pipe:0",
                             "-map", "0:a:0", "-vn", "-sn", "-ac", "2", "-ar", "48000", "-f", PCM_FMT,
                             "-flush_packets", "1", "pipe:1", NULL };
-    char err[300] = "";
-    decoder_t *v = dec_start(vargs, (size_t)a->fw * a->fh * 4, on_video, a, err, sizeof(err));
-    decoder_t *au = v ? dec_start(aargs, 4 * 480, on_audio, a, err, sizeof(err)) : NULL;
-    if (!v || !au) {
+    decoder_t *au = (v || !a->preview) ? dec_start(aargs, 4 * 480, on_audio, a, err, sizeof(err)) : NULL;
+    if ((a->preview && !v) || !au) {
         char msg[400];
         snprintf(msg, sizeof(msg), "No preview or sound: %s", err);
         set_problem(a, msg);
@@ -586,6 +594,35 @@ static void start_decoders(app_t *a, int sw, int sh, int fps)
     a->vdec = v;
     a->adec = au;
     pthread_mutex_unlock(&a->data_lock);
+}
+
+/* the preview was switched on or off: start or end the picture's decoder alone */
+static void sync_preview(app_t *a)
+{
+    pthread_mutex_lock(&a->data_lock);
+    int has_v = a->vdec != NULL;
+    pthread_mutex_unlock(&a->data_lock);
+    if (a->preview && !has_v) {
+        char err[300] = "";
+        decoder_t *v = start_video(a, a->dec_sh, a->dec_fps, err, sizeof(err));
+        if (v) {
+            pthread_mutex_lock(&a->data_lock);
+            a->vdec = v;
+            pthread_mutex_unlock(&a->data_lock);
+            set_problem(a, NULL);
+        } else {
+            char msg[400];
+            snprintf(msg, sizeof(msg), "No preview: %s", err);
+            set_problem(a, msg);
+        }
+    } else if (!a->preview && has_v) {
+        pthread_mutex_lock(&a->data_lock);
+        decoder_t *v = a->vdec;
+        a->vdec = NULL;
+        pthread_mutex_unlock(&a->data_lock);
+        dec_stop(v);
+        clear_frame(a);
+    }
 }
 
 /* ---- the device worker ---- */
@@ -751,6 +788,7 @@ static void *worker(void *arg)
             nap(a, 1000);
             if (a->quit || a->reconfig)
                 break;
+            sync_preview(a);
             hdpvr_signal_t now;
             if ((r = hdpvr_get_signal(a->dev, &now))) {
                 if (device_gone(r)) {
@@ -814,6 +852,7 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     a->src.quality = clampi(quality, 0, APP_QUALITIES - 1);
     a->src.pal = pal != 0;
     a->monitor = 1;
+    a->preview = 1;
     a->ring.frames = a->ring_frames;
     a->ring.size = RING_FRAMES;
     a->fw = 1280;
@@ -946,6 +985,17 @@ double app_aspect(app_t *a)
 }
 
 void app_set_widescreen(app_t *a, int on) { a->widescreen = on; }
+
+void app_set_preview(app_t *a, int on)
+{
+    pthread_mutex_lock(&a->lock);
+    a->preview = on != 0;
+    a->retry = 1;
+    pthread_cond_broadcast(&a->cv); /* wakes the worker's nap so the decoder follows at once */
+    pthread_mutex_unlock(&a->lock);
+}
+
+int app_preview(app_t *a) { return a->preview; }
 
 /* ---- sound ---- */
 
@@ -1353,6 +1403,10 @@ int app_snapshot(app_t *a, const char *folder, char *path, int pathlen, char *er
 {
     if (app_state(a) != APP_STREAMING) {
         snprintf(err, (size_t)errlen, "There is no picture to save yet.");
+        return -1;
+    }
+    if (!a->preview) {
+        snprintf(err, (size_t)errlen, "Turn the preview on to save a snapshot.");
         return -1;
     }
     int w, h;

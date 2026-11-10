@@ -23,7 +23,7 @@
 #include "hdpvr.h"
 
 enum {
-    ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
+    ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_PREVIEW, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
     ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R,
     IDM_RECORD = 200, IDM_SNAPSHOT, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE,
     TIMER_FRAME = 1, TIMER_UI = 2,
@@ -34,7 +34,7 @@ enum {
 static struct {
     HINSTANCE inst;
     HWND wnd, preview;
-    HWND input, pal, audio, wide, quality, folder_btn, record, monitor, time, status, meter[2];
+    HWND input, pal, audio, wide, previewchk, quality, folder_btn, record, monitor, time, status, meter[2];
     HWND labels[NLABELS];
     HFONT font, time_font, badge_font, msg_font;
     HBRUSH bar_brush;
@@ -137,7 +137,7 @@ static LRESULT CALLBACK preview_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                          { c.left, r.top, r.left, r.bottom }, { r.right, r.top, c.right, r.bottom } };
         for (int i = 0; i < 4; i++)
             FillRect(dc, &bars[i], black);
-        if (G.frame) {
+        if (G.frame && (!G.app || app_preview(G.app))) {
             BITMAPINFO bi = { 0 };
             bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
             bi.bmiHeader.biWidth = G.w;
@@ -151,10 +151,13 @@ static LRESULT CALLBACK preview_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                           DIB_RGB_COLORS, SRCCOPY);
         }
         SetBkMode(dc, TRANSPARENT);
-        if (G.app && app_state(G.app) != APP_STREAMING) {
+        if (G.app && (app_state(G.app) != APP_STREAMING || !app_preview(G.app))) {
             char s[600];
             wchar_t w[600];
-            app_status(G.app, s, sizeof(s));
+            if (app_state(G.app) == APP_STREAMING)
+                snprintf(s, sizeof(s), "Preview off");
+            else
+                app_status(G.app, s, sizeof(s));
             utf8_to_w(s, w, 600);
             HFONT old = SelectObject(dc, G.msg_font);
             SetTextColor(dc, RGB(190, 190, 190));
@@ -218,7 +221,8 @@ static void layout(void)
     int x = S(12), lh = S(20);
     struct { HWND h; int w, dy, hh, gap; } row1[] = {
         { G.labels[0], 36, 3, 20, 6 },  { G.input, 100, 0, 200, 6 },   { G.pal, 50, 2, 20, 16 },
-        { G.labels[1], 38, 3, 20, 6 },  { G.audio, 90, 0, 200, 6 },    { G.wide, 96, 2, 20, 16 },
+        { G.labels[1], 38, 3, 20, 6 },  { G.audio, 90, 0, 200, 6 },    { G.wide, 96, 2, 20, 6 },
+        { G.previewchk, 70, 2, 20, 16 },
         { G.labels[2], 46, 3, 20, 6 },  { G.quality, 160, 0, 200, 16 }, { G.labels[3], 50, 3, 20, 6 },
         { G.folder_btn, 180, -1, 26, 6 },
     };
@@ -270,6 +274,7 @@ static void build_controls(void)
     G.labels[1] = make(L"STATIC", L"Audio", 0, ID_LBL_AUDIO);
     G.audio = make_combo(ID_AUDIO, app_audio_names, 3);
     G.wide = make(L"BUTTON", L"Widescreen", BS_AUTOCHECKBOX | WS_TABSTOP, ID_WIDE);
+    G.previewchk = make(L"BUTTON", L"Preview", BS_AUTOCHECKBOX | WS_TABSTOP, ID_PREVIEW);
     G.labels[2] = make(L"STATIC", L"Quality", 0, ID_LBL_QUALITY);
     G.quality = make_combo(ID_QUALITY, app_quality_names, APP_QUALITIES);
     G.labels[3] = make(L"STATIC", L"Save to", 0, ID_LBL_SAVE);
@@ -432,7 +437,7 @@ static void source_changed(void)
 static void toggle_fullscreen(void)
 {
     DWORD style = (DWORD)GetWindowLongW(G.wnd, GWL_STYLE);
-    HWND bar[] = { G.input, G.pal, G.audio, G.wide, G.quality, G.folder_btn, G.record, G.monitor, G.time,
+    HWND bar[] = { G.input, G.pal, G.audio, G.wide, G.previewchk, G.quality, G.folder_btn, G.record, G.monitor, G.time,
                    G.status, G.meter[0], G.meter[1], G.labels[0], G.labels[1], G.labels[2], G.labels[3],
                    G.labels[4], G.labels[5] };
     G.fullscreen = !G.fullscreen;
@@ -593,6 +598,13 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_PAL:
             source_changed();
             return 0;
+        case ID_PREVIEW: {
+            int on = checked(G.previewchk);
+            app_set_preview(G.app, on);
+            app_set_setting_int("preview", on);
+            InvalidateRect(G.preview, NULL, TRUE);
+            return 0;
+        }
         case ID_WIDE: {
             int on = checked(G.wide);
             app_set_widescreen(G.app, on);
@@ -736,6 +748,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     SendMessageW(G.quality, CB_SETCURSEL, quality, 0);
     SendMessageW(G.pal, BM_SETCHECK, pal ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(G.wide, BM_SETCHECK, wide ? BST_CHECKED : BST_UNCHECKED, 0);
+    int preview = app_setting_int("preview", 1);
+    SendMessageW(G.previewchk, BM_SETCHECK, preview ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(G.monitor, BM_SETCHECK, monitor ? BST_CHECKED : BST_UNCHECKED, 0);
 
     G.app = app_start(input, audio, quality, pal);
@@ -744,6 +758,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         return 1;
     }
     app_set_widescreen(G.app, wide);
+    app_set_preview(G.app, preview);
     app_set_monitor(G.app, monitor);
     update_folder_button();
     update_enabled();

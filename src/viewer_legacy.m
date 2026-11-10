@@ -233,7 +233,7 @@ static int pot(int v)
     PreviewView *_preview;
     NSView *_bar;
     NSPopUpButton *_input, *_audio, *_quality;
-    NSButton *_pal, *_wide, *_monitor, *_record, *_folderButton;
+    NSButton *_pal, *_wide, *_previewCheck, *_monitor, *_record, *_folderButton;
     NSTextField *_time, *_status;
     MeterView *_meters;
     NSTimer *_timer;
@@ -344,7 +344,8 @@ static void rec_done(void *user, int ok, const char *path);
 {
     NSRect b = [_bar bounds];
     NSArray *row1 = [NSArray arrayWithObjects:[self label:@"Input"], _input, _pal, [NSNumber numberWithFloat:8],
-                                              [self label:@"Audio"], _audio, _wide, [NSNumber numberWithFloat:8],
+                                              [self label:@"Audio"], _audio, _wide, _previewCheck,
+                                              [NSNumber numberWithFloat:8],
                                               [self label:@"Quality"], _quality, [NSNumber numberWithFloat:8],
                                               [self label:@"Save to"], _folderButton, nil];
     NSArray *row2 = [NSArray arrayWithObjects:_record, _time, _meters, _monitor, nil];
@@ -463,12 +464,15 @@ static void rec_done(void *user, int ok, const char *path);
     _meters = [[[MeterView alloc] initWithFrame:NSMakeRect(0, 0, 90, 15)] autorelease];
     _monitor = make_button(@"Play audio", self, @selector(monitorChanged:), YES);
     [_monitor setState:[ud boolForKey:@"monitor"] ? NSOnState : NSOffState];
+    _previewCheck = make_button(@"Preview", self, @selector(previewChanged:), YES);
+    [_previewCheck setState:[ud boolForKey:@"preview"] ? NSOnState : NSOffState];
+    [_previewCheck setToolTip:@"Show the picture. Off saves the computer the work of decoding it; the sound and recording are not affected."];
     _status = make_label(@"");
     [_status setTextColor:[NSColor disabledControlTextColor]];
     [[_status cell] setLineBreakMode:NSLineBreakByTruncatingMiddle];
     [_status setAutoresizingMask:NSViewWidthSizable];
 
-    NSArray *all = [NSArray arrayWithObjects:_input, _pal, _audio, _wide, _quality, _folderButton, _record, _time,
+    NSArray *all = [NSArray arrayWithObjects:_input, _pal, _audio, _wide, _previewCheck, _quality, _folderButton, _record, _time,
                                              _meters, _monitor, _status, nil];
     unsigned i;
     for (i = 0; i < [all count]; i++)
@@ -487,7 +491,7 @@ static void rec_done(void *user, int ok, const char *path);
     [ud registerDefaults:[NSDictionary dictionaryWithObjectsAndKeys:
         [NSNumber numberWithInt:0], @"input", [NSNumber numberWithInt:0], @"audio", [NSNumber numberWithBool:NO], @"pal",
         [NSNumber numberWithBool:NO], @"widescreen", [NSNumber numberWithInt:0], @"quality",
-        [NSNumber numberWithBool:YES], @"monitor", nil]];
+        [NSNumber numberWithBool:YES], @"monitor", [NSNumber numberWithBool:YES], @"preview", nil]];
 
     /* Cocoa must know threads exist before the engine's threads call back into it */
     [NSThread detachNewThreadSelector:@selector(noop:) toTarget:self withObject:nil];
@@ -509,6 +513,7 @@ static void rec_done(void *user, int ok, const char *path);
         return;
     }
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
+    app_set_preview(g_app, [ud boolForKey:@"preview"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
     [self buildWindow];
     [NSApp activateIgnoringOtherApps:YES];
@@ -544,6 +549,16 @@ static void rec_done(void *user, int ok, const char *path);
                    (int)[_quality indexOfSelectedItem], [_pal state] == NSOnState);
     [_preview clear];
     [self updateEnabled];
+}
+
+- (void)previewChanged:(id)sender
+{
+    (void)sender;
+    BOOL on = [_previewCheck state] == NSOnState;
+    app_set_preview(g_app, on);
+    [[self ud] setBool:on forKey:@"preview"];
+    if (!on)
+        [_preview clear];
 }
 
 - (void)widescreenChanged:(id)sender

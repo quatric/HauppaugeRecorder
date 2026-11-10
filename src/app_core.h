@@ -52,6 +52,10 @@ void app_frame_size(app_t *a, int *w, int *h);
 int app_get_frame(app_t *a, uint32_t *buf, int w, int h, uint64_t *seq);
 /* Display aspect of the picture: 16:9 for HD, 4:3 or 16:9 (widescreen) for SD. */
 double app_aspect(app_t *a);
+/* Off stops decoding the picture (the sound and recording go on) so a slow computer has more CPU; snapshots
+ * need it on. Takes effect within a moment, also while streaming. Default on. */
+void app_set_preview(app_t *a, int on);
+int app_preview(app_t *a);
 void app_set_widescreen(app_t *a, int on); /* SD only: preview, snapshots, and the 16:9 flag in recordings started after */
 
 /* Audio: peak levels since the last call in dBFS (-60..0), monitoring. */

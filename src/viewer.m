@@ -460,7 +460,7 @@ static app_t *g_app;
     volatile int _showing; /* a frame is on its way to the main thread */
 
     NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup;
-    NSButton *_palCheck, *_wideCheck, *_monitorCheck, *_recordButton, *_folderButton;
+    NSButton *_palCheck, *_wideCheck, *_previewCheck, *_monitorCheck, *_recordButton, *_folderButton;
     Box *_bar;
     NSTextField *_timeLabel, *_statusLabel;
     NSLevelIndicator *_meterL, *_meterR;
@@ -476,7 +476,7 @@ static app_t *g_app;
 {
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     [ud registerDefaults:@{ @"input" : @0, @"audio" : @0, @"pal" : @NO, @"widescreen" : @NO, @"quality" : @0,
-                            @"monitor" : @YES }];
+                            @"monitor" : @YES, @"preview" : @YES }];
     NSString *folder = [ud stringForKey:@"folder"];
     _folder = folder ? [NSURL fileURLWithPath:folder]
                      : [NSFileManager.defaultManager URLsForDirectory:NSMoviesDirectory
@@ -492,6 +492,7 @@ static app_t *g_app;
                       (int)[ud integerForKey:@"quality"], [ud boolForKey:@"pal"]);
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
+    app_set_preview(g_app, [ud boolForKey:@"preview"]);
     [self startAudio];
     [self tick];
 
@@ -566,6 +567,11 @@ static app_t *g_app;
     _wideCheck.state = [ud boolForKey:@"widescreen"] ? NSControlStateValueOn : NSControlStateValueOff;
     _wideCheck.toolTip = @"Show standard-definition pictures at 16:9 in the preview and snapshots.";
 
+    _previewCheck = make_button(@"Preview", self, @selector(previewChanged:), YES);
+    _previewCheck.state = [ud boolForKey:@"preview"] ? NSControlStateValueOn : NSControlStateValueOff;
+    _previewCheck.toolTip = @"Show the picture. Off saves the computer the work of decoding it; the sound and "
+                            @"recording are not affected.";
+
     _folderButton = make_button(@"", self, @selector(chooseFolder:), NO);
     _folderButton.bezelStyle = NSBezelStyleRounded;
     set_symbol(_folderButton, @"folder", @"Folder");
@@ -573,12 +579,12 @@ static app_t *g_app;
     [self updateFolderButton];
 
     Box *row1 = stack(@[
-        [self label:@"Input"], _inputPopup, _palCheck, [self label:@"Audio"], _audioPopup, _wideCheck,
+        [self label:@"Input"], _inputPopup, _palCheck, [self label:@"Audio"], _audioPopup, _wideCheck, _previewCheck,
         [self label:@"Quality"], _qualityPopup, [self label:@"Save to"], _folderButton
     ]);
     row1.spacing = 8;
     [row1 setGap:16 afterView:_palCheck];
-    [row1 setGap:16 afterView:_wideCheck];
+    [row1 setGap:16 afterView:_previewCheck];
     [row1 setGap:16 afterView:_qualityPopup];
 
     /* row 2: record button, time, meters, monitor, status */
@@ -674,6 +680,7 @@ static app_t *g_app;
     NSMenu *view = [[NSMenu alloc] initWithTitle:@"View"];
     [view addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"]
         .keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [view addItemWithTitle:@"Show Preview" action:@selector(togglePreview:) keyEquivalent:@"e"];
     viewItem.submenu = view;
     NSApp.mainMenu = bar;
 }
@@ -735,6 +742,25 @@ static app_t *g_app;
     [self updatePal];
 }
 
+- (void)previewChanged:(id)sender
+{
+    BOOL on = _previewCheck.state == NSControlStateValueOn;
+    [NSUserDefaults.standardUserDefaults setBool:on forKey:@"preview"];
+    app_set_preview(g_app, on);
+    if (!on) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _preview.picture.contents = nil;
+        [CATransaction commit];
+    }
+}
+
+- (void)togglePreview:(id)sender
+{
+    _previewCheck.state = _previewCheck.state == NSControlStateValueOn ? NSControlStateValueOff : NSControlStateValueOn;
+    [self previewChanged:sender];
+}
+
 - (void)widescreenChanged:(id)sender
 {
     BOOL on = _wideCheck.state == NSControlStateValueOn;
@@ -780,7 +806,9 @@ static app_t *g_app;
         return !_finishing && (app_is_recording(g_app) || app_state(g_app) == APP_STREAMING);
     }
     if (item.action == @selector(snapshot:))
-        return app_state(g_app) == APP_STREAMING;
+        return app_state(g_app) == APP_STREAMING && app_preview(g_app);
+    if (item.action == @selector(togglePreview:))
+        item.state = app_preview(g_app) ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 
@@ -942,8 +970,9 @@ static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now, c
     char status[600];
     app_status(g_app, status, sizeof(status));
     NSString *s = [NSString stringWithUTF8String:status];
-    _preview.message.stringValue = st == APP_STREAMING ? @"" : s;
-    _preview.message.hidden = st == APP_STREAMING;
+    BOOL picture = st == APP_STREAMING && app_preview(g_app);
+    _preview.message.stringValue = picture ? @"" : st == APP_STREAMING ? @"Preview off" : s;
+    _preview.message.hidden = picture;
     int w, h, fps;
     _window.title = app_signal(g_app, &w, &h, &fps)
                         ? [NSString stringWithFormat:@APP_NAME " — %@ %d×%d", _inputPopup.titleOfSelectedItem, w, h]
