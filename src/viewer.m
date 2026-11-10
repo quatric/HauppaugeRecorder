@@ -459,7 +459,8 @@ static app_t *g_app;
     CVDisplayLinkRef _link;
     volatile int _showing; /* a frame is on its way to the main thread */
 
-    NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup, *_stopAfterPopup;
+    NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup;
+    NSComboBox *_stopAfterPopup;
     NSButton *_palCheck, *_wideCheck, *_previewCheck, *_monitorCheck, *_recordButton, *_folderButton;
     Box *_bar;
     NSTextField *_timeLabel, *_statusLabel;
@@ -493,7 +494,7 @@ static app_t *g_app;
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
     app_set_preview(g_app, [ud boolForKey:@"preview"]);
-    app_set_stop_after(g_app, (int)_stopAfterPopup.indexOfSelectedItem);
+    [self applyStopAfter];
     [self startAudio];
     [self tick];
 
@@ -617,9 +618,24 @@ static app_t *g_app;
     _statusLabel.textColor = label_color(YES);
     [_statusLabel.cell setLineBreakMode:NSLineBreakByTruncatingMiddle];
 
-    _stopAfterPopup = make_popup(app_stop_after_names, APP_STOP_AFTERS, self, @selector(stopAfterChanged:));
-    [_stopAfterPopup selectItemAtIndex:MAX(0, MIN(APP_STOP_AFTERS - 1, [ud integerForKey:@"stopAfter"]))];
-    _stopAfterPopup.toolTip = @"Stop the recording by itself after this long.";
+    _stopAfterPopup = [NSComboBox new];
+    for (int i = 0; i < APP_STOP_AFTERS; i++)
+        [_stopAfterPopup addItemWithObjectValue:@(app_stop_after_names[i])];
+    _stopAfterPopup.target = self;
+    _stopAfterPopup.action = @selector(stopAfterChanged:);
+    _stopAfterPopup.delegate = (id)self; /* typing a time and leaving the box counts too */
+    limit_size(_stopAfterPopup, 120, 0, 0);
+    {
+        NSUserDefaults *sud = NSUserDefaults.standardUserDefaults;
+        int saved = [sud objectForKey:@"stopAfterMinutes"] ? (int)[sud integerForKey:@"stopAfterMinutes"]
+                                                           : app_stop_after_from_index((int)[sud integerForKey:@"stopAfter"]);
+        char lb[48];
+        saved = MAX(0, MIN(APP_STOP_AFTER_MAX, saved));
+        app_stop_after_label(saved, lb, sizeof(lb));
+        _stopAfterPopup.stringValue = @(lb);
+        (void)0;
+    }
+    _stopAfterPopup.toolTip = @"Stop the recording by itself after this long. Pick a time, or type your own: 45, 2h, 1:30...";
 
     Box *row2 = stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, [self label:@"Stop after"], _stopAfterPopup,
                          _statusLabel ]);
@@ -749,8 +765,26 @@ static app_t *g_app;
 
 - (void)stopAfterChanged:(id)sender
 {
-    [NSUserDefaults.standardUserDefaults setInteger:_stopAfterPopup.indexOfSelectedItem forKey:@"stopAfter"];
-    app_set_stop_after(g_app, (int)_stopAfterPopup.indexOfSelectedItem);
+    [self applyStopAfter];
+}
+
+/* Reads the "Stop after" box (a preset or a typed time), shows it tidily and remembers it. */
+- (void)applyStopAfter
+{
+    int mins = app_parse_stop_after(_stopAfterPopup.stringValue.UTF8String);
+    if (mins < 0)
+        mins = (int)[NSUserDefaults.standardUserDefaults integerForKey:@"stopAfterMinutes"]; /* not a time: keep the last one */
+    char lb[48];
+    app_stop_after_label(mins, lb, sizeof(lb));
+    _stopAfterPopup.stringValue = @(lb);
+    app_set_stop_after_minutes(g_app, mins);
+    [NSUserDefaults.standardUserDefaults setInteger:mins forKey:@"stopAfterMinutes"];
+}
+
+- (void)controlTextDidEndEditing:(NSNotification *)n
+{
+    if (n.object == _stopAfterPopup)
+        [self applyStopAfter];
 }
 
 - (void)previewChanged:(id)sender
