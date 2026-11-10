@@ -233,6 +233,7 @@ static int pot(int v)
     PreviewView *_preview;
     NSView *_bar;
     NSPopUpButton *_input, *_audio, *_quality;
+    NSPopUpButton *_stopAfter;
     NSButton *_pal, *_wide, *_previewCheck, *_monitor, *_record, *_folderButton;
     NSTextField *_time, *_status;
     MeterView *_meters;
@@ -348,7 +349,7 @@ static void rec_done(void *user, int ok, const char *path);
                                               [NSNumber numberWithFloat:8],
                                               [self label:@"Quality"], _quality, [NSNumber numberWithFloat:8],
                                               [self label:@"Save to"], _folderButton, nil];
-    NSArray *row2 = [NSArray arrayWithObjects:_record, _time, _meters, _monitor, nil];
+    NSArray *row2 = [NSArray arrayWithObjects:_record, _time, _meters, _monitor, [self label:@"Stop after"], _stopAfter, nil];
     unsigned i;
     for (i = 0; i < [row1 count]; i++) {
         id v = [row1 objectAtIndex:i];
@@ -359,6 +360,8 @@ static void rec_done(void *user, int ok, const char *path);
     fit(_record, 100, 0);
     fit(_time, 0, 0);
     fit(_monitor, 0, 0);
+    fit([self label:@"Stop after"], 0, 0);
+    fit(_stopAfter, 0, 0);
     place_row(row1, 12, 44, 26, 6);
     float x = place_row(row2, 12, 8, 28, 12);
     NSRect sf = [_status frame];
@@ -425,7 +428,7 @@ static void rec_done(void *user, int ok, const char *path);
 {
     NSUserDefaults *ud = [self ud];
     int barH = 78;
-    _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 960, 540 + barH)
+    _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 960, [[NSScreen mainScreen] visibleFrame].size.height - 60 < 540 + barH ? [[NSScreen mainScreen] visibleFrame].size.height - 60 : 540 + barH)
                                           styleMask:NSTitledWindowMask | NSClosableWindowMask |
                                                     NSMiniaturizableWindowMask | NSResizableWindowMask
                                             backing:NSBackingStoreBuffered
@@ -464,6 +467,10 @@ static void rec_done(void *user, int ok, const char *path);
     _meters = [[[MeterView alloc] initWithFrame:NSMakeRect(0, 0, 90, 15)] autorelease];
     _monitor = make_button(@"Play audio", self, @selector(monitorChanged:), YES);
     [_monitor setState:[ud boolForKey:@"monitor"] ? NSOnState : NSOffState];
+    _stopAfter = make_popup(app_stop_after_names, APP_STOP_AFTERS, self, @selector(stopAfterChanged:));
+    [_stopAfter selectItemAtIndex:[ud integerForKey:@"stopAfter"] >= 0 && [ud integerForKey:@"stopAfter"] < APP_STOP_AFTERS ? [ud integerForKey:@"stopAfter"] : 0];
+    [_stopAfter setToolTip:@"Stop the recording by itself after this long."];
+    app_set_stop_after(g_app, (int)[_stopAfter indexOfSelectedItem]);
     _previewCheck = make_button(@"Preview", self, @selector(previewChanged:), YES);
     [_previewCheck setState:[ud boolForKey:@"preview"] ? NSOnState : NSOffState];
     [_previewCheck setToolTip:@"Show the picture. Off saves the computer the work of decoding it; the sound and recording are not affected."];
@@ -473,7 +480,7 @@ static void rec_done(void *user, int ok, const char *path);
     [_status setAutoresizingMask:NSViewWidthSizable];
 
     NSArray *all = [NSArray arrayWithObjects:_input, _pal, _audio, _wide, _previewCheck, _quality, _folderButton, _record, _time,
-                                             _meters, _monitor, _status, nil];
+                                             _meters, _monitor, _stopAfter, _status, nil];
     unsigned i;
     for (i = 0; i < [all count]; i++)
         [_bar addSubview:[all objectAtIndex:i]];
@@ -549,6 +556,13 @@ static void rec_done(void *user, int ok, const char *path);
                    (int)[_quality indexOfSelectedItem], [_pal state] == NSOnState);
     [_preview clear];
     [self updateEnabled];
+}
+
+- (void)stopAfterChanged:(id)sender
+{
+    (void)sender;
+    app_set_stop_after(g_app, (int)[_stopAfter indexOfSelectedItem]);
+    [[self ud] setInteger:[_stopAfter indexOfSelectedItem] forKey:@"stopAfter"];
 }
 
 - (void)previewChanged:(id)sender
@@ -721,6 +735,8 @@ static void rec_done(void *user, int ok, const char *path)
     if (rec) {
         int sec = (int)app_record_seconds(g_app);
         [_time setStringValue:[NSString stringWithFormat:@"%02d:%02d:%02d", sec / 3600, sec / 60 % 60, sec % 60]];
+        if (!_finishing && app_stop_after_due(g_app))
+            [self toggleRecord:nil]; /* "Stop after" */
         s = [NSString stringWithFormat:@"Recording %.1f MB - %@", app_record_bytes(g_app) / 1e6, s];
     } else if (_finishing) {
         s = @"Finishing the file...";

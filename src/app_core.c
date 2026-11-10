@@ -108,6 +108,7 @@ struct app {
     int fw, fh, hd;
     uint64_t seq;
     volatile int widescreen;
+    volatile int stop_after; /* minutes, 0 = no limit */
     volatile int preview;   /* 0: the picture is not decoded (recording and sound go on) */
     int dec_sw, dec_sh, dec_fps; /* what the decoders were last started for */
 
@@ -1295,6 +1296,20 @@ int app_is_recording(app_t *a)
     int r = a->rec != NULL;
     pthread_mutex_unlock(&a->data_lock);
     return r;
+}
+
+const int app_stop_after_minutes[APP_STOP_AFTERS] = { 0, 5, 10, 15, 30, 60, 90, 120, 180 };
+const char *const app_stop_after_names[APP_STOP_AFTERS] = { "No limit", "5 min", "10 min", "15 min", "30 min",
+                                                            "1 hour", "1.5 hours", "2 hours", "3 hours" };
+
+void app_set_stop_after(app_t *a, int index)
+{
+    a->stop_after = index >= 0 && index < APP_STOP_AFTERS ? app_stop_after_minutes[index] : 0;
+}
+
+int app_stop_after_due(app_t *a)
+{
+    return a->stop_after > 0 && app_is_recording(a) && app_record_seconds(a) >= a->stop_after * 60.0;
 }
 
 double app_record_seconds(app_t *a)

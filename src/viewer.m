@@ -459,7 +459,7 @@ static app_t *g_app;
     CVDisplayLinkRef _link;
     volatile int _showing; /* a frame is on its way to the main thread */
 
-    NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup;
+    NSPopUpButton *_inputPopup, *_audioPopup, *_qualityPopup, *_stopAfterPopup;
     NSButton *_palCheck, *_wideCheck, *_previewCheck, *_monitorCheck, *_recordButton, *_folderButton;
     Box *_bar;
     NSTextField *_timeLabel, *_statusLabel;
@@ -493,6 +493,7 @@ static app_t *g_app;
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
     app_set_preview(g_app, [ud boolForKey:@"preview"]);
+    app_set_stop_after(g_app, (int)_stopAfterPopup.indexOfSelectedItem);
     [self startAudio];
     [self tick];
 
@@ -538,7 +539,7 @@ static app_t *g_app;
 {
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     _window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 960, 540 + 90)
+        initWithContentRect:NSMakeRect(0, 0, 960, MIN(540 + 90, NSScreen.mainScreen.visibleFrame.size.height - 60))
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                             NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered
@@ -616,8 +617,12 @@ static app_t *g_app;
     _statusLabel.textColor = label_color(YES);
     [_statusLabel.cell setLineBreakMode:NSLineBreakByTruncatingMiddle];
 
-    Box *row2 =
-        stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, _statusLabel ]);
+    _stopAfterPopup = make_popup(app_stop_after_names, APP_STOP_AFTERS, self, @selector(stopAfterChanged:));
+    [_stopAfterPopup selectItemAtIndex:MAX(0, MIN(APP_STOP_AFTERS - 1, [ud integerForKey:@"stopAfter"]))];
+    _stopAfterPopup.toolTip = @"Stop the recording by itself after this long.";
+
+    Box *row2 = stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, [self label:@"Stop after"], _stopAfterPopup,
+                         _statusLabel ]);
     row2.flexible = _statusLabel;
     row2.spacing = 16;
 
@@ -740,6 +745,12 @@ static app_t *g_app;
     app_set_source(g_app, (int)_inputPopup.indexOfSelectedItem, (int)_audioPopup.indexOfSelectedItem,
                    (int)_qualityPopup.indexOfSelectedItem, _palCheck.state == NSControlStateValueOn);
     [self updatePal];
+}
+
+- (void)stopAfterChanged:(id)sender
+{
+    [NSUserDefaults.standardUserDefaults setInteger:_stopAfterPopup.indexOfSelectedItem forKey:@"stopAfter"];
+    app_set_stop_after(g_app, (int)_stopAfterPopup.indexOfSelectedItem);
 }
 
 - (void)previewChanged:(id)sender
@@ -983,6 +994,8 @@ static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now, c
         _timeLabel.stringValue = [NSString stringWithFormat:@"%02d:%02d:%02d", t / 3600, t / 60 % 60, t % 60];
         _preview.badge.stringValue = [NSString stringWithFormat:@"● REC %@", _timeLabel.stringValue];
         [_preview setNeedsLayout:YES];
+        if (!_finishing && app_stop_after_due(g_app))
+            [self stopRecording]; /* "Stop after" */
         s = [NSString stringWithFormat:@"Recording %.1f MB — %@", app_record_bytes(g_app) / 1e6, s];
     } else if (!_finishing) {
         _timeLabel.stringValue = @"00:00:00";

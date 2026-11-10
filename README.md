@@ -46,6 +46,8 @@ default output; from 10.15 it uses AVAudioEngine.
 The **Preview** checkbox (View > Show Preview, `Cmd+E`, on macOS) turns the picture off: ffmpeg then stops decoding it,
 which leaves a slow computer more CPU. The sound and the recording are not affected. Snapshots need it on.
 
+**Stop after** ends a recording by itself after 5 minutes up to 3 hours (default: no limit).
+
 ## Platforms
 
 * **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.9 or later.
