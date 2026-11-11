@@ -527,6 +527,11 @@ static void encoder_stop(hdpvr_t *dev)
     set1(dev, V_STOP, 0);
     cancel_transfers(dev);
     drain(dev);
+    /* the counterpart of the "encoder start" in encoder_start(): without it the box's red record light
+     * stays on after the stream has stopped */
+    dev->ctrl_timeout_ms = START_TIMEOUT_MS;
+    ctrl_out(dev, 0xb8, 0x0000, 0, NULL, 0);
+    dev->ctrl_timeout_ms = 0;
 }
 
 static void *event_thread(void *arg)

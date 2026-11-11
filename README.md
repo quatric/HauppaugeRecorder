@@ -7,8 +7,8 @@ box's own encoder produces.
 
 Status: the command line recorder `hdpvr-capture` builds for every platform. It has been tested on
 macOS 10.15 (Intel) with an HD PVR 1212 on firmware 0x1e, recording 480i and 480p from the
-component input and 480i from composite, with AAC audio and no dropped packets. S-Video, 720p and
-1080i, AC-3 audio, and the Windows and Linux builds have not been tested on a device yet.
+component input and 480i from composite, with AAC audio and no dropped packets. S-Video has been
+reported working by a user. 720p and 1080i, AC-3 audio, and the Windows and Linux builds have not been tested on a device yet.
 
 ## Use
 

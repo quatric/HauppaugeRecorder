@@ -540,14 +540,14 @@ static app_t *g_app;
 {
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     _window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 960, MIN(540 + 90, NSScreen.mainScreen.visibleFrame.size.height - 60))
+        initWithContentRect:NSMakeRect(0, 0, MIN(640, NSScreen.mainScreen.visibleFrame.size.width - 40), MIN(360 + 120, NSScreen.mainScreen.visibleFrame.size.height - 60))
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                             NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                     backing:NSBackingStoreBuffered
                       defer:NO];
     _window.delegate = self;
     _window.title = @APP_NAME;
-    _window.frameAutosaveName = @"HDPVRCaptureWindow";
+    _window.frameAutosaveName = @"HDPVRCaptureWindow2"; /* the old name remembered a larger window */
     _window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
 
     _preview = [[HDPreview alloc] initWithFrame:NSZeroRect];
@@ -580,14 +580,14 @@ static app_t *g_app;
     limit_size(_folderButton, 0, 200, 0);
     [self updateFolderButton];
 
+    /* three short rows rather than two long ones, so the window can be narrow */
     Box *row1 = stack(@[
-        [self label:@"Input"], _inputPopup, _palCheck, [self label:@"Audio"], _audioPopup, _wideCheck, _previewCheck,
-        [self label:@"Quality"], _qualityPopup, [self label:@"Save to"], _folderButton
+        [self label:@"Input"], _inputPopup, _palCheck, [self label:@"Audio"], _audioPopup,
+        [self label:@"Quality"], _qualityPopup
     ]);
     row1.spacing = 8;
     [row1 setGap:16 afterView:_palCheck];
-    [row1 setGap:16 afterView:_previewCheck];
-    [row1 setGap:16 afterView:_qualityPopup];
+    [row1 setGap:16 afterView:_audioPopup];
 
     /* row 2: record button, time, meters, monitor, status */
     _recordButton = make_button(@"Record", self, @selector(toggleRecord:), NO);
@@ -624,7 +624,7 @@ static app_t *g_app;
     _stopAfterPopup.target = self;
     _stopAfterPopup.action = @selector(stopAfterChanged:);
     _stopAfterPopup.delegate = (id)self; /* typing a time and leaving the box counts too */
-    limit_size(_stopAfterPopup, 120, 0, 0);
+    limit_size(_stopAfterPopup, 120, 0, 24); /* a combo box has no intrinsic height on 10.9 */
     {
         NSUserDefaults *sud = NSUserDefaults.standardUserDefaults;
         int saved = [sud objectForKey:@"stopAfterMinutes"] ? (int)[sud integerForKey:@"stopAfterMinutes"]
@@ -637,12 +637,17 @@ static app_t *g_app;
     }
     _stopAfterPopup.toolTip = @"Stop the recording by itself after this long. Pick a time, or type your own: 45, 2h, 1:30...";
 
-    Box *row2 = stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, [self label:@"Stop after"], _stopAfterPopup,
-                         _statusLabel ]);
+    Box *rowOpt = stack(@[ _wideCheck, _previewCheck, [self label:@"Save to"], _folderButton,
+                           [self label:@"Stop after"], _stopAfterPopup ]);
+    rowOpt.spacing = 8;
+    [rowOpt setGap:16 afterView:_previewCheck];
+    [rowOpt setGap:16 afterView:_folderButton];
+
+    Box *row2 = stack(@[ _recordButton, _timeLabel, meters, _monitorCheck, _statusLabel ]);
     row2.flexible = _statusLabel;
     row2.spacing = 16;
 
-    Box *bar = stack(@[ row1, row2 ]);
+    Box *bar = stack(@[ row1, rowOpt, row2 ]);
     bar.orientation = NSUserInterfaceLayoutOrientationVertical;
     bar.spacing = 8;
     bar.edgeInsets = NSEdgeInsetsMake(10, 12, 10, 12);
@@ -660,7 +665,7 @@ static app_t *g_app;
         mk(bar, NSLayoutAttributeLeading, NSLayoutRelationEqual, content, NSLayoutAttributeLeading, 1, 0),
         mk(bar, NSLayoutAttributeTrailing, NSLayoutRelationEqual, content, NSLayoutAttributeTrailing, 1, 0),
         mk(bar, NSLayoutAttributeBottom, NSLayoutRelationEqual, content, NSLayoutAttributeBottom, 1, 0),
-        mk(_preview, NSLayoutAttributeWidth, NSLayoutRelationGreaterThanOrEqual, nil, 0, 1, 720),
+        mk(_preview, NSLayoutAttributeWidth, NSLayoutRelationGreaterThanOrEqual, nil, 0, 1, 360),
     ]);
     [bar setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
     [bar setContentCompressionResistancePriority:NSLayoutPriorityRequired
@@ -735,7 +740,7 @@ static app_t *g_app;
     /* keep the picture's height and change its width, within the screen */
     NSRect vis = _window.screen.visibleFrame;
     CGFloat bar = _window.contentView.bounds.size.height - _preview.bounds.size.height;
-    CGFloat h = _preview.bounds.size.height, w = MAX(720, h * aspect);
+    CGFloat h = _preview.bounds.size.height, w = MAX(360, h * aspect);
     NSRect fr = [_window frameRectForContentRect:NSMakeRect(0, 0, w, w / aspect + bar)];
     if (fr.size.width > vis.size.width || fr.size.height > vis.size.height) {
         CGFloat s = MIN(vis.size.width / fr.size.width, vis.size.height / fr.size.height);
@@ -777,7 +782,8 @@ static app_t *g_app;
     char lb[48];
     app_stop_after_label(mins, lb, sizeof(lb));
     _stopAfterPopup.stringValue = @(lb);
-    app_set_stop_after_minutes(g_app, mins);
+    if (g_app) /* the box can end editing while the app quits */
+        app_set_stop_after_minutes(g_app, mins);
     [NSUserDefaults.standardUserDefaults setInteger:mins forKey:@"stopAfterMinutes"];
 }
 

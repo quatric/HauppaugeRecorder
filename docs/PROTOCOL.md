@@ -39,6 +39,7 @@ Every setting is a vendor control request to the device (`bmRequestType` `0x38` 
 | Encoder start | `0xb8` out, `wIndex` 0 | `0x0001` | none | before Start |
 | Start | `0x01` out | `0x0700` | 1 byte `0` | stream starts on the bulk endpoint |
 | Stop | `0x01` out | `0x0800` | 1 byte `0` | then read the bulk endpoint until it times out (90 ms) to empty it |
+| Encoder stop | `0xb8` out, `wIndex` 0 | `0x0000` | none | after Stop and emptying the endpoint; without it the red record light stays on |
 
 ## Unlock
 
