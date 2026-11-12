@@ -25,7 +25,7 @@ Every setting is a vendor control request to the device (`bmRequestType` `0x38` 
 | Status | `0x81` in | `0x0400` | 46 bytes | byte 1 = firmware version, bytes 2.. = build date (text), bytes 38–45 = challenge |
 | Unlock | `0xd1` out, `wIndex` 0 | `0x0000` | 8 bytes | challenge answer, see below. Required before streaming |
 | Filter | `0x01` out | `0x3100` | 4 bytes | luma and chroma low-pass strength, chroma MF enable. Default `03 03 00 00` |
-| Fan and LEDs | `0xd4` out, `wIndex` 0 | `0` | 1 byte | `1` = on |
+| Fan and LEDs | `0xd4` out, `wIndex` 0 | `0` | 1 byte | `1` = on while streaming, `0` = off when stopped |
 | Audio boost | `0xd5` out, `wIndex` 0 | `0` | 1 byte | `1` = boost analog audio |
 | Video standard | `0x01` out | `0x1700` | 1 byte | `0` = 60 Hz, `1` = 50 Hz (SD inputs) |
 | Video input | `0x01` out | `0x1500` | 1 byte | `1` = component, `2` = S-Video, `3` = composite |

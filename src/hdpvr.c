@@ -350,11 +350,10 @@ int hdpvr_open(hdpvr_t **out)
         hdpvr_close(dev);
         return r;
     }
-    /* filter defaults, fan and LEDs on */
+    /* filter defaults; the fan and LEDs are switched on only while streaming (encoder_start), so the
+     * box's red light is not left lit when idle */
     static const uint8_t filter[4] = { 0x03, 0x03, 0x00, 0x00 };
-    uint8_t one = 1;
     ctrl_out(dev, 0x01, V_FILTER, CTRL_INDEX, filter, 4);
-    ctrl_out(dev, 0xd4, 0, 0, &one, 1);
 
     hdpvr_options_t o;
     hdpvr_default_options(&o);
@@ -498,6 +497,8 @@ static int encoder_start(hdpvr_t *dev, int timeout_ms)
         dbg(1, "letting the encoder settle for %d ms", (int)settle);
         msleep((int)settle);
     }
+    uint8_t led = 1;
+    ctrl_out(dev, 0xd4, 0, 0, &led, 1);
     dev->ctrl_timeout_ms = START_TIMEOUT_MS;
     int r = ctrl_out(dev, 0xb8, 0x0001, 0, NULL, 0);
     dev->ctrl_timeout_ms = 0;
@@ -532,6 +533,8 @@ static void encoder_stop(hdpvr_t *dev)
     dev->ctrl_timeout_ms = START_TIMEOUT_MS;
     ctrl_out(dev, 0xb8, 0x0000, 0, NULL, 0);
     dev->ctrl_timeout_ms = 0;
+    uint8_t led = 0;
+    ctrl_out(dev, 0xd4, 0, 0, &led, 1); /* fan and LEDs off */
 }
 
 static void *event_thread(void *arg)
