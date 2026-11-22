@@ -316,7 +316,7 @@ bool DsBackend::open(Engine &e)
             e.vh = abs(vi->bmiHeader.biHeight);
             e.vbytes = vi->bmiHeader.biSizeImage ? vi->bmiHeader.biSizeImage : (size_t)e.vw * e.vh * 2;
             logf("video: %dx%d, %zu bytes/frame", e.vw, e.vh, e.vbytes);
-            free(mt.pbFormat);
+            CoTaskMemFree(mt.pbFormat);
         }
     }
 
@@ -339,7 +339,7 @@ bool DsBackend::open(Engine &e)
                         logf("vbi: lines %lu-%lu, %lu samples/line at %.3f MHz, buffer %lu bytes (stride %lu)", vbih.StartLine,
                              vbih.EndLine, vbih.SamplesPerLine, e.vbi_fs / 1e6, vbih.BufferSize, vbih.StrideInBytes);
                     }
-                    if (mt.pbFormat) free(mt.pbFormat);
+                    if (mt.pbFormat) CoTaskMemFree(mt.pbFormat);
                 } else logf("warning: could not connect the VBI pin (0x%08lx); no captions", h1);
             }
         } else logf("warning: this driver has no VBI pin; no captions");
@@ -422,7 +422,7 @@ bool DsBackend::open(Engine &e)
                     e.have_audio = true;
                     logf("audio: %d Hz, %d ch, %d bit", e.audio.rate, e.audio.channels, e.audio.bits);
                 }
-                if (mt.pbFormat) free(mt.pbFormat);
+                if (mt.pbFormat) CoTaskMemFree(mt.pbFormat);
             } else logf("warning: could not connect the audio device");
         }
     } else logf("warning: no audio device with '%s' in its name; recording without sound", o.audio_device.c_str());
