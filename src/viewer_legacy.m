@@ -56,6 +56,9 @@ static int pot(int v)
 - (void)drawPicture;
 @end
 
+static const char *const kPicNames[5] = { "Brightness", "Contrast", "Hue", "Saturation", "Sharpness" };
+static NSSlider *g_picSlider[5];
+
 @implementation PreviewView
 - (id)initWithFrame:(NSRect)frame
 {
@@ -382,6 +385,69 @@ static void rec_done(void *user, int ok, const char *path);
     [_status setFrame:sf];
 }
 
+- (void)syncPictureSliders
+{
+    int i;
+    for (i = 0; i < 5; i++)
+        [g_picSlider[i] setIntValue:app_get_picture(g_app, i)];
+}
+
+- (void)pictureChanged:(id)s
+{
+    app_set_picture(g_app, (int)[s tag], [s intValue]);
+    [[NSUserDefaults standardUserDefaults] setInteger:[s intValue] forKey:[NSString stringWithFormat:@"picture%d", (int)[s tag]]];
+}
+
+- (void)resetPicture:(id)sender
+{
+    int i;
+    for (i = 0; i < 5; i++) {
+        app_set_picture(g_app, i, -1);
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithFormat:@"picture%d", i]];
+    }
+    [self syncPictureSliders];
+}
+
+/* the saved picture settings go to the encoder; the sliders follow */
+- (void)restorePicture
+{
+    int i;
+    for (i = 0; i < 5; i++) {
+        id o = [[NSUserDefaults standardUserDefaults] objectForKey:[NSString stringWithFormat:@"picture%d", i]];
+        if (o)
+            app_set_picture(g_app, i, [o intValue]);
+    }
+    [self syncPictureSliders];
+}
+
+- (void)buildAdvancedMenu:(NSMenu *)bar
+{
+    NSMenuItem *advItem = [[[NSMenuItem alloc] initWithTitle:@"Advanced" action:NULL keyEquivalent:@""] autorelease];
+    NSMenu *adv = [[[NSMenu alloc] initWithTitle:@"Advanced"] autorelease];
+    int i;
+    if (![advItem respondsToSelector:@selector(setView:)]) /* views in menus: 10.5 and later */
+        return;
+    for (i = 0; i < 5; i++) {
+        NSView *v = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 250, 22)] autorelease];
+        NSTextField *l = [[[NSTextField alloc] initWithFrame:NSMakeRect(14, 2, 74, 17)] autorelease];
+        NSSlider *s = [[[NSSlider alloc] initWithFrame:NSMakeRect(90, 1, 150, 20)] autorelease];
+        NSMenuItem *it = [[[NSMenuItem alloc] initWithTitle:@"" action:NULL keyEquivalent:@""] autorelease];
+        [l setStringValue:[NSString stringWithUTF8String:kPicNames[i]]];
+        [l setBezeled:NO]; [l setDrawsBackground:NO]; [l setEditable:NO]; [l setSelectable:NO];
+        [s setMinValue:0]; [s setMaxValue:255]; [s setContinuous:YES]; [s setTag:i];
+        [s setTarget:self]; [s setAction:@selector(pictureChanged:)];
+        [v addSubview:l];
+        [v addSubview:s];
+        g_picSlider[i] = s;
+        [it performSelector:@selector(setView:) withObject:v];
+        [adv addItem:it];
+    }
+    [adv addItem:[NSMenuItem separatorItem]];
+    [[adv addItemWithTitle:@"Reset Picture" action:@selector(resetPicture:) keyEquivalent:@""] setTarget:self];
+    [advItem setSubmenu:adv];
+    [bar addItem:advItem];
+}
+
 - (void)buildMenu
 {
     NSMenu *bar = [[[NSMenu alloc] initWithTitle:@""] autorelease];
@@ -409,6 +475,7 @@ static void rec_done(void *user, int ok, const char *path);
     [fileItem setSubmenu:file];
     [bar addItem:fileItem];
 
+    [self buildAdvancedMenu:bar];
     [NSApp setMainMenu:bar];
     if ([NSApp respondsToSelector:@selector(setAppleMenu:)]) /* 10.3 needs it to treat the first menu as the app menu */
         [NSApp performSelector:@selector(setAppleMenu:) withObject:appMenu];
@@ -551,6 +618,7 @@ static void rec_done(void *user, int ok, const char *path);
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
     app_set_preview(g_app, [ud boolForKey:@"preview"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
+    [self restorePicture];
     [self buildWindow];
     [NSApp activateIgnoringOtherApps:YES];
 

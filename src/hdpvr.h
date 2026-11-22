@@ -54,6 +54,9 @@ void hdpvr_default_options(hdpvr_options_t *o);
 int hdpvr_open(hdpvr_t **out);
 void hdpvr_close(hdpvr_t *dev);
 const hdpvr_info_t *hdpvr_info(hdpvr_t *dev);
+/* Live picture controls, i: 0 brightness, 1 contrast, 2 hue, 3 saturation, 4 sharpness; v 0-255, -1 = firmware default. */
+int hdpvr_set_picture(hdpvr_t *dev, int i, int v);
+int hdpvr_picture_default(hdpvr_t *dev, int i);
 int hdpvr_configure(hdpvr_t *dev, const hdpvr_options_t *o);
 int hdpvr_get_signal(hdpvr_t *dev, hdpvr_signal_t *s);
 /* Waits up to timeout_ms for a picture, then starts the encoder. A stalled

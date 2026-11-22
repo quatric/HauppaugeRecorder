@@ -56,6 +56,10 @@ double app_aspect(app_t *a);
  * need it on. Takes effect within a moment, also while streaming. Default on. */
 void app_set_preview(app_t *a, int on);
 int app_preview(app_t *a);
+/* Picture controls, i: 0 brightness, 1 contrast, 2 hue, 3 saturation, 4 sharpness; v 0-255, -1 = default.
+ * Applied at once, also while recording (the encoder changes the stream), and kept across restarts. */
+void app_set_picture(app_t *a, int i, int v);
+int app_get_picture(app_t *a, int i); /* the value in effect */
 void app_set_widescreen(app_t *a, int on); /* SD only: preview, snapshots, and the 16:9 flag in recordings started after */
 
 /* Audio: peak levels since the last call in dBFS (-60..0), monitoring. */

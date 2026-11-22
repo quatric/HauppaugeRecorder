@@ -15,6 +15,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <commctrl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +26,7 @@
 enum {
     ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_PREVIEW, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
     ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER,
-    IDM_RECORD = 200, IDM_SNAPSHOT, IDM_RCLICK_SNAP, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE,
+    IDM_RECORD = 200, IDM_SNAPSHOT, IDM_RCLICK_SNAP, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE, IDM_PICTURE,
     TIMER_FRAME = 1, TIMER_UI = 2,
     WM_APP_RECDONE = WM_APP + 1,
 };
@@ -307,9 +308,70 @@ static void build_controls(void)
     G.status = make(L"STATIC", L"", SS_ENDELLIPSIS | SS_NOPREFIX, ID_STATUS);
 }
 
+/* ---- picture adjustments: a small window of sliders (a Windows menu cannot hold them) ---- */
+
+static HWND pic_wnd, pic_track[5];
+static const wchar_t *const pic_names[5] = { L"Brightness", L"Contrast", L"Hue", L"Saturation", L"Sharpness" };
+
+static void pic_sync(void)
+{
+    for (int i = 0; i < 5; i++)
+        SendMessageW(pic_track[i], TBM_SETPOS, TRUE, app_get_picture(G.app, i));
+}
+
+static LRESULT CALLBACK pic_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_HSCROLL:
+        for (int i = 0; i < 5; i++)
+            if ((HWND)lp == pic_track[i])
+                app_set_picture(G.app, i, (int)SendMessageW(pic_track[i], TBM_GETPOS, 0, 0));
+        return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) {
+            for (int i = 0; i < 5; i++)
+                app_set_picture(G.app, i, -1);
+            pic_sync();
+        }
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(h);
+        return 0;
+    case WM_DESTROY:
+        pic_wnd = NULL;
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static void show_picture(void)
+{
+    if (pic_wnd) {
+        SetForegroundWindow(pic_wnd);
+        return;
+    }
+    HINSTANCE inst = GetModuleHandleW(NULL);
+    RECT r = { 0, 0, S(360), S(5 * 34 + 50) };
+    AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
+    pic_wnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"HDPVRPicture", L"Picture Adjustments", WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                              CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, G.wnd, NULL, inst, NULL);
+    for (int i = 0; i < 5; i++) {
+        HWND l = CreateWindowExW(0, L"STATIC", pic_names[i], WS_CHILD | WS_VISIBLE, S(10), S(12 + 34 * i), S(80), S(20), pic_wnd, NULL, inst, NULL);
+        pic_track[i] = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS, S(95), S(8 + 34 * i),
+                                       S(255), S(28), pic_wnd, NULL, inst, NULL);
+        SendMessageW(pic_track[i], TBM_SETRANGE, TRUE, MAKELPARAM(0, 255));
+        SendMessageW(pic_track[i], TBM_SETPAGESIZE, 0, 16);
+        SendMessageW(l, WM_SETFONT, (WPARAM)G.font, TRUE);
+    }
+    HWND b = CreateWindowExW(0, L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, S(270), S(5 * 34 + 12), S(80), S(26),
+                             pic_wnd, (HMENU)IDOK, inst, NULL);
+    SendMessageW(b, WM_SETFONT, (WPARAM)G.font, TRUE);
+    pic_sync();
+}
+
 static void build_menu(void)
 {
-    HMENU file = CreatePopupMenu(), view = CreatePopupMenu();
+    HMENU file = CreatePopupMenu(), view = CreatePopupMenu(), adv = CreatePopupMenu();
     AppendMenuW(file, MF_STRING, IDM_RECORD, L"&Start Recording\tCtrl+R");
     AppendMenuW(file, MF_STRING, IDM_SNAPSHOT, L"Save &Snapshot\tCtrl+S");
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
@@ -319,10 +381,12 @@ static void build_menu(void)
     AppendMenuW(file, MF_STRING, IDM_EXIT, L"E&xit");
     AppendMenuW(view, MF_STRING, IDM_FULLSCREEN, L"&Full Screen\tF11");
     AppendMenuW(view, MF_STRING | MF_CHECKED, IDM_RCLICK_SNAP, L"&Right-Click Saves Snapshot");
+    AppendMenuW(adv, MF_STRING, IDM_PICTURE, L"&Picture Adjustments\x2026");
     G.rclick_snap = 1;
     G.menu = CreateMenu();
     AppendMenuW(G.menu, MF_POPUP, (UINT_PTR)file, L"&File");
     AppendMenuW(G.menu, MF_POPUP, (UINT_PTR)view, L"&View");
+    AppendMenuW(G.menu, MF_POPUP, (UINT_PTR)adv, L"&Advanced");
     SetMenu(G.wnd, G.menu);
 }
 
@@ -704,6 +768,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             if (G.fullscreen)
                 toggle_fullscreen();
             return 0;
+        case IDM_PICTURE:
+            show_picture();
+            break;
         case IDM_EXIT:
             PostMessageW(h, WM_CLOSE, 0, 0);
             return 0;
@@ -792,6 +859,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     wc.hIconSm = wc.hIcon;
     wc.lpszClassName = L"HDPVRCapture";
     RegisterClassExW(&wc);
+
+    wc.lpfnWndProc = pic_proc;
+    wc.lpszClassName = L"HDPVRPicture";
+    RegisterClassExW(&wc);
+    InitCommonControlsEx(&(INITCOMMONCONTROLSEX){ sizeof(INITCOMMONCONTROLSEX), ICC_BAR_CLASSES });
 
     RECT r = { 0, 0, S(960), S(540 + BAR_H) };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, TRUE);

@@ -46,6 +46,9 @@ default output; from 10.15 it uses AVAudioEngine.
 The **Preview** checkbox (View > Show Preview, `Cmd+E`, on macOS) turns the picture off: ffmpeg then stops decoding it,
 which leaves a slow computer more CPU. The sound and the recording are not affected. Snapshots need it on.
 
+The Advanced menu (Picture Adjustments on Windows) has sliders for brightness, contrast, hue, saturation and sharpness. They
+change the HD PVR's encoder live, so recordings carry them too; Reset Picture restores the firmware defaults.
+
 **Stop after** ends a recording by itself after a time you choose (default: no limit): pick 5 minutes up to 12 hours (4, 6, 8, 10 and 12 hours match VHS tape lengths), or type your own (`45`, `90 min`, `2h`, `1:30`).
 
 ## Platforms

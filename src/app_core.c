@@ -109,6 +109,7 @@ struct app {
     int fw, fh, hd;
     uint64_t seq;
     volatile int widescreen;
+    volatile int pic[5];     /* picture controls, -1 = firmware default */
     volatile int stop_after; /* minutes, 0 = no limit */
     volatile int preview;   /* 0: the picture is not decoded (recording and sound go on) */
     int dec_sw, dec_sh, dec_fps; /* what the decoders were last started for */
@@ -743,6 +744,7 @@ static void *worker(void *arg)
         o.pal = s.pal;
         o.kbps = quality_kbps[s.quality];
         o.peak_kbps = o.kbps + 2000;
+        o.brightness = a->pic[0], o.contrast = a->pic[1], o.hue = a->pic[2], o.saturation = a->pic[3], o.sharpness = a->pic[4];
         int r = hdpvr_configure(a->dev, &o);
         if (r) {
             set_state(a, APP_STARTING, "Configuring the HD PVR failed: %s", hdpvr_strerror(r));
@@ -845,6 +847,8 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     app_t *a = calloc(1, sizeof(*a));
     if (!a)
         return NULL;
+    for (int i = 0; i < 5; i++)
+        a->pic[i] = -1;
     pthread_mutex_init(&a->lock, NULL);
     pthread_cond_init(&a->cv, NULL);
     pthread_mutex_init(&a->data_lock, NULL);
@@ -987,6 +991,29 @@ double app_aspect(app_t *a)
 }
 
 void app_set_widescreen(app_t *a, int on) { a->widescreen = on; }
+
+void app_set_picture(app_t *a, int i, int v)
+{
+    if (i < 0 || i > 4)
+        return;
+    a->pic[i] = v;
+    pthread_mutex_lock(&a->lock);
+    if (a->dev)
+        hdpvr_set_picture(a->dev, i, v);
+    pthread_mutex_unlock(&a->lock);
+}
+
+int app_get_picture(app_t *a, int i)
+{
+    if (i < 0 || i > 4)
+        return 0;
+    if (a->pic[i] >= 0)
+        return a->pic[i];
+    pthread_mutex_lock(&a->lock);
+    int d = hdpvr_picture_default(a->dev, i);
+    pthread_mutex_unlock(&a->lock);
+    return d;
+}
 
 void app_set_preview(app_t *a, int on)
 {

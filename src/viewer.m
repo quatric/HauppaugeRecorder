@@ -249,6 +249,9 @@ static NSSize natural_size(NSView *v)
     return NSMakeSize(ceil(s.width), ceil(s.height));
 }
 
+static const char *const kPicNames[5] = { "Brightness", "Contrast", "Hue", "Saturation", "Sharpness" };
+static NSSlider *g_picSlider[5];
+
 @implementation Box {
     NSMutableDictionary<NSValue *, NSNumber *> *_gaps;
 }
@@ -500,6 +503,7 @@ static app_t *g_app;
     app_set_widescreen(g_app, [ud boolForKey:@"widescreen"]);
     app_set_monitor(g_app, [ud boolForKey:@"monitor"]);
     app_set_preview(g_app, [ud boolForKey:@"preview"]);
+    [self restorePicture];
     [self applyStopAfter];
     [self startAudio];
     [self tick];
@@ -686,6 +690,63 @@ static app_t *g_app;
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+- (void)syncPictureSliders
+{
+    for (int i = 0; i < 5; i++)
+        g_picSlider[i].intValue = app_get_picture(g_app, i);
+}
+
+- (void)pictureChanged:(NSSlider *)s
+{
+    app_set_picture(g_app, (int)s.tag, s.intValue);
+    [NSUserDefaults.standardUserDefaults setInteger:s.intValue forKey:[NSString stringWithFormat:@"picture%d", (int)s.tag]];
+}
+
+- (void)resetPicture:(id)sender
+{
+    for (int i = 0; i < 5; i++) {
+        app_set_picture(g_app, i, -1);
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:[NSString stringWithFormat:@"picture%d", i]];
+    }
+    [self syncPictureSliders];
+}
+
+/* the saved picture settings go to the encoder; the sliders follow */
+- (void)restorePicture
+{
+    for (int i = 0; i < 5; i++) {
+        id o = [NSUserDefaults.standardUserDefaults objectForKey:[NSString stringWithFormat:@"picture%d", i]];
+        if (o)
+            app_set_picture(g_app, i, [o intValue]);
+    }
+    [self syncPictureSliders];
+}
+
+- (void)buildAdvancedMenu:(NSMenu *)bar
+{
+    NSMenuItem *advItem = [NSMenuItem new];
+    [bar addItem:advItem];
+    NSMenu *adv = [[NSMenu alloc] initWithTitle:@"Advanced"];
+    for (int i = 0; i < 5; i++) {
+        NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 250, 22)];
+        NSTextField *l = [[NSTextField alloc] initWithFrame:NSMakeRect(14, 2, 74, 17)];
+        l.stringValue = [NSString stringWithUTF8String:kPicNames[i]];
+        l.bezeled = NO; l.drawsBackground = NO; l.editable = NO; l.selectable = NO;
+        NSSlider *s = [[NSSlider alloc] initWithFrame:NSMakeRect(90, 1, 150, 20)];
+        s.minValue = 0; s.maxValue = 255; s.continuous = YES; s.tag = i;
+        s.target = self; s.action = @selector(pictureChanged:);
+        [v addSubview:l];
+        [v addSubview:s];
+        g_picSlider[i] = s;
+        NSMenuItem *it = [NSMenuItem new];
+        it.view = v;
+        [adv addItem:it];
+    }
+    [adv addItem:[NSMenuItem separatorItem]];
+    [adv addItemWithTitle:@"Reset Picture" action:@selector(resetPicture:) keyEquivalent:@""];
+    advItem.submenu = adv;
+}
+
 - (void)buildMenu
 {
     NSMenu *bar = [NSMenu new];
@@ -715,6 +776,7 @@ static app_t *g_app;
     [view addItemWithTitle:@"Show Preview" action:@selector(togglePreview:) keyEquivalent:@"e"];
     [view addItemWithTitle:@"Right-Click Saves Snapshot" action:@selector(toggleRightClickSnapshot:) keyEquivalent:@""];
     viewItem.submenu = view;
+    [self buildAdvancedMenu:bar];
     NSApp.mainMenu = bar;
 }
 

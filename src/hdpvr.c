@@ -384,6 +384,21 @@ const hdpvr_info_t *hdpvr_info(hdpvr_t *dev) { return &dev->info; }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+static const uint16_t pic_regs[5] = { V_BRIGHTNESS, V_CONTRAST, V_HUE, V_SATURATION, V_SHARPNESS };
+
+int hdpvr_picture_default(hdpvr_t *dev, int i)
+{
+    static const int def_new[5] = { 0x80, 0x40, 0x0f, 0x40, 0x80 }, def_old[5] = { 0x86, 0x80, 0x80, 0x80, 0x80 };
+    return dev && dev->info.firmware <= 0x15 ? def_old[i] : def_new[i];
+}
+
+int hdpvr_set_picture(hdpvr_t *dev, int i, int v)
+{
+    if (i < 0 || i > 4)
+        return LIBUSB_ERROR_INVALID_PARAM;
+    return set1(dev, pic_regs[i], (uint8_t)(v < 0 ? hdpvr_picture_default(dev, i) : clampi(v, 0, 255))) ? LIBUSB_ERROR_IO : 0;
+}
+
 int hdpvr_configure(hdpvr_t *dev, const hdpvr_options_t *o)
 {
     hdpvr_options_t c = *o;
