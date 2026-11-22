@@ -24,7 +24,7 @@ APP     = $(BUILD)/HauppaugeRecorder.app
 # preview and the sound. BUNDLE_FFMPEG=0 skips it (then ffmpeg comes from PATH).
 BUNDLE_FFMPEG ?= 1
 FFMPEG   = $(BUILD)/ffmpeg
-ENGINE   = $(BUILD)/hdpvr.o $(BUILD)/app_core.o $(BUILD)/decoder.o $(BUILD)/sink.o
+ENGINE   = $(BUILD)/hdpvr.o $(BUILD)/app_core.o $(BUILD)/decoder.o $(BUILD)/sink.o $(BUILD)/tvdev.o
 
 all: $(BUILD)/hdpvr-capture app
 

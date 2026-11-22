@@ -30,6 +30,17 @@ typedef enum {
     APP_STREAMING,
 } app_state_t;
 
+/* TV tuner mode (Hauppauge WinTV USB tuners such as the HVR-950Q): the capture is done by a helper program
+ * (see tvdev.h); the same calls below then control it. 1 if the helper is installed. */
+int app_tv_available(void);
+/* Like app_start, but for the TV tuner. The tuner is configured with app_tv_command. */
+app_t *app_start_tv(void);
+int app_is_tv(app_t *a);
+/* A command for the TV helper, printf style: "source tuner|composite|svideo", "channel N", "cable 0|1",
+ * "quality low|medium|high|best", "bitrate MBPS" (0 = the quality's), "cbr 0|1", "pal 0|1", "cc 0|1",
+ * and "start" once configured. */
+void app_tv_command(app_t *a, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
 /* Starts the engine; it connects to the HD PVR in the background. */
 app_t *app_start(int video_input, int audio_input, int quality, int pal);
 void app_close(app_t *a); /* finishes a recording in progress */

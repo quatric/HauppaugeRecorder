@@ -51,6 +51,47 @@ change the HD PVR's encoder live, so recordings carry them too; Reset Picture re
 
 **Stop after** ends a recording by itself after a time you choose (default: no limit): pick 5 minutes up to 12 hours (4, 6, 8, 10 and 12 hours match VHS tape lengths), or type your own (`45`, `90 min`, `2h`, `1:30`).
 
+## WinTV analog tuners (HVR-950Q): captions in the recording
+
+The app also records from the **Hauppauge WinTV HVR-950Q** (and other WDM analog tuners): pick **WinTV tuner** in the
+Device box, then a **channel**, **cable or antenna**, a **quality** (3, 5, 7 or 9 Mbit/s) or an exact **Mbit/s**, and
+press Record. It saves an MPEG-2 `.mpg` with the **line 21 closed captions (CEA-608) written into the video**, so
+VLC, ffmpeg, CCExtractor, DVD players and TVs show them. The preview, the level meters, Stop after, snapshots and the
+folder choice work as for the HD PVR.
+
+Unlike the HD PVR, this tuner has no hardware encoder and is not driven through libusb. A small **helper program**
+per platform (`wintv-capture.exe` on Windows) owns the tuner, reads the raw VBI scan lines from the driver itself, decodes
+the captions, and encodes the video and audio with ffmpeg. The captions never depend on Hauppauge's WinTV application
+(which must not be running: only one program can use the tuner). The protocol between the app and the helper is in
+[docs/TVHELPER.md](docs/TVHELPER.md).
+
+| Platform | WinTV tuner |
+|---|---|
+| Windows | works: `wintv-capture.exe`, DirectShow through Hauppauge's driver. Tested on an HVR-950Q, NTSC cable channel 3. |
+| Linux | `tv-capture-linux`: V4L2 and ALSA through the kernel's `au0828` driver (needs the xc5000 firmware). Written and its core runs, but **not tried on a real tuner yet**; the app has no Linux window, so it is the command line there. |
+| macOS | not written yet: Hauppauge has no driver for this tuner, so it needs a libusb user space driver |
+
+The helper also runs on its own:
+
+```bash
+wintv-capture -s tuner -c 3 -t 1:30 -q high -o show.mpg            # channel 3 for 1 h 30 min
+wintv-capture -s tuner -c 3 --antenna --at 20:00 -t 30m -b 6.5     # starts at 20:00, 30 minutes, 6.5 Mbit/s
+wintv-capture --scan                                               # channels that deliver a picture
+wintv-capture --probe 6 -s tuner -c 3                              # what the driver delivers
+wintv-capture --selftest 8 -o test.mpg                             # synthetic picture and caption, no tuner needed
+```
+
+`-t` takes `90`, `90s`, `45m`, `2h`, `1:30` (1 h 30 min) or `1:30:15`. `-q low|medium|high|best`, `-b MBPS`, `--peak MBPS` and
+`--cbr` set the video bitrate; `--pal`, `--wide`, `--tff`, `--audio-kbps N`, `--ac3` and `--no-cc` are the rest (`--help`).
+`ffmpeg.exe` with the MPEG-2 encoder must be next to the helper, in `WINTV_FFMPEG`, or on PATH; the bundled ffmpeg
+(`scripts/build-ffmpeg.sh`) now includes it. The helper alone builds with `scripts\build-wintv.bat` (Visual Studio), which
+also runs the caption test (`tests/test_cc608.c`); `scripts/build-all.sh` builds it with Zig next to the app.
+
+Status: tested on a real HVR-950Q on NTSC channel 3 (cable): 30 s recordings with no dropped frames, captions that read
+back as correct text through ffmpeg's CEA-608 decoder, and audio. The GUI was run against it end to end (preview, record,
+stop, exit). Not tested: composite and S-Video (this tuner's coax input only was available), PAL, AC-3, and the new
+ffmpeg configure flags (a full ffmpeg build was used). If the driver stops starting (`0x8007001f`), unplug and replug the tuner.
+
 ## Platforms
 
 * **macOS**: nothing to install. Universal 2 (Intel and Apple silicon), macOS 10.9 or later.

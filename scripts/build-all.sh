@@ -26,7 +26,7 @@ x86_64-linux-musl aarch64-linux-musl"}
 
 V=vendor/libusb
 COMMON="-O2 -Wall -Wextra -Wno-missing-field-initializers -std=gnu11 -Isrc -I$V"
-SRC="src/hdpvr.c src/app_core.c src/decoder.c src/sink.c"
+SRC="src/hdpvr.c src/app_core.c src/decoder.c src/sink.c src/tvdev.c"
 
 for t in $TARGETS; do
   name=$(echo "$t" | sed 's/\.2\.31$//')
@@ -73,8 +73,18 @@ $V/os/threads_posix.c $V/os/linux_usbfs.c $V/os/linux_netlink.c"
   esac
   echo "== $name ($CC)"
   $CC $COMMON $FL $LU src/hdpvr.c src/capture.c $RES $LIBS -o "$OUT/$name/hdpvr-capture$ext"
+  if [ $os = linux ] && [ -f src/tv_linux.cpp ]; then
+    # the V4L2 helper for analog TV tuners (Hauppauge WinTV HVR-950Q): HauppaugeRecorder's "WinTV tuner" device on Linux
+    $ZIG c++ -target $t -O2 -std=c++17 -Wall -Wextra -Wno-unused-parameter -Isrc src/tv_linux.cpp -lpthread -ldl \
+        -o "$OUT/$name/tv-capture-linux"
+  fi
   if [ -n "$GUI" ] && [ -f "$GUI" ]; then
     $CC $COMMON $FL $LU $SRC $OSSRC $GUI $RES $GUILIBS $LIBS -o "$OUT/$name/HauppaugeRecorder$ext"
+  fi
+  if [ $os = windows ] && [ -f src/wintv.cpp ]; then
+    # the Hauppauge WinTV tuner helper (DirectShow, C++); the app starts it for the "WinTV tuner" device
+    if [ -n "$wcc" ]; then WCXX=$(echo "$wcc" | sed 's/clang/clang++/; s/gcc/g++/'); else WCXX="$ZIG c++ -target $t"; fi
+    $WCXX -O2 -std=c++17 -Wall -Wno-unknown-pragmas -Isrc src/wintv.cpp -lole32 -loleaut32 -lstrmiids -luuid -luser32         -static -o "$OUT/$name/wintv-capture$ext"
   fi
   if [ $os = windows ]; then
     # Zadig-style driver installer, plus the libusbK fallback driver

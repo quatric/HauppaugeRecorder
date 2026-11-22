@@ -4,6 +4,7 @@
 #include "hdpvr.h"
 #include "monitor_ring.h"
 #include "sink.h"
+#include "tvdev.h"
 #if !defined(__APPLE__) || defined(LEGACY_MAC) /* the old-Mac build plays through Core Audio here */
 #include "sysaudio.h"
 #endif
@@ -48,7 +49,7 @@ static void mono_ts(struct timespec *ts)
 #endif
 }
 
-#define RING_FRAMES 32768      /* power of two, ~680 ms at 48 kHz */
+#define RING_FRAMES 131072     /* power of two, ~2.7 s at 48 kHz (the TV tuner's audio comes in half-second bursts) */
 /* Decoded preview frames are queued and shown one per frame interval, because
  * ffmpeg hands them over in bursts as the USB data arrives. */
 #define FRAME_QUEUE 8
@@ -121,6 +122,20 @@ struct app {
 #if !defined(__APPLE__) || defined(LEGACY_MAC)
     sa_output_t *out;
 #endif
+
+    /* TV tuner mode: everything above for the HD PVR is idle and these carry the state */
+    tvdev_t *tv;
+    int tv_wide;
+    volatile int tv_chunk; /* the biggest audio chunk the helper sent, in frames: the monitor's cushion follows it */
+    int tv_rec;          /* a recording is running (the helper confirmed it) */
+    int tv_rec_pending;  /* record command sent, waiting for the helper */
+    int tv_rec_failed;
+    char tv_err[300];
+    double tv_sec;
+    uint64_t tv_bytes;
+    app_done_cb tv_done;
+    void *tv_done_user;
+    char tv_path[1024];
 };
 
 /* ---- small helpers ---- */
@@ -880,10 +895,16 @@ app_t *app_start(int video_input, int audio_input, int quality, int pal)
     return a;
 }
 
+static void tv_free(app_t *a);
+
 void app_close(app_t *a)
 {
     if (!a)
         return;
+    if (a->tv) {
+        tv_free(a);
+        return;
+    }
     pthread_mutex_lock(&a->data_lock);
     sink_t *rec = a->rec;
     FILE *f = a->rec_file;
@@ -910,6 +931,10 @@ void app_close(app_t *a)
 
 void app_retry(app_t *a)
 {
+    if (a->tv) {
+        tv_send(a->tv, "retry");
+        return;
+    }
     pthread_mutex_lock(&a->lock);
     a->retry = 1;
     pthread_cond_broadcast(&a->cv);
@@ -918,6 +943,11 @@ void app_retry(app_t *a)
 
 void app_set_source(app_t *a, int video_input, int audio_input, int quality, int pal)
 {
+    if (a->tv) { /* the TV helper takes its settings through app_tv_command */
+        (void)video_input, (void)audio_input, (void)quality;
+        app_tv_command(a, "pal %d", pal != 0);
+        return;
+    }
     if (app_is_recording(a))
         return;
     pthread_mutex_lock(&a->lock);
@@ -972,7 +1002,8 @@ int app_get_frame(app_t *a, uint32_t *buf, int w, int h, uint64_t *seq)
 {
     int copied = 0;
     pthread_mutex_lock(&a->frame_lock);
-    advance_frame(a);
+    if (!a->tv)
+        advance_frame(a);
     if (a->seq != *seq && w == a->fw && h == a->fh) {
         memcpy(buf, a->rgb, (size_t)w * h * 4);
         *seq = a->seq;
@@ -987,10 +1018,17 @@ double app_aspect(app_t *a)
     pthread_mutex_lock(&a->frame_lock);
     int hd = a->hd;
     pthread_mutex_unlock(&a->frame_lock);
+    if (a->tv)
+        return a->widescreen || a->tv_wide ? 16.0 / 9 : 4.0 / 3;
     return hd || a->widescreen ? 16.0 / 9 : 4.0 / 3;
 }
 
-void app_set_widescreen(app_t *a, int on) { a->widescreen = on; }
+void app_set_widescreen(app_t *a, int on)
+{
+    a->widescreen = on;
+    if (a->tv)
+        tv_send(a->tv, "wide %d", on != 0);
+}
 
 void app_set_picture(app_t *a, int i, int v)
 {
@@ -998,7 +1036,7 @@ void app_set_picture(app_t *a, int i, int v)
         return;
     a->pic[i] = v;
     pthread_mutex_lock(&a->lock);
-    if (a->dev)
+    if (a->dev && !a->tv)
         hdpvr_set_picture(a->dev, i, v);
     pthread_mutex_unlock(&a->lock);
 }
@@ -1010,13 +1048,15 @@ int app_get_picture(app_t *a, int i)
     if (a->pic[i] >= 0)
         return a->pic[i];
     pthread_mutex_lock(&a->lock);
-    int d = hdpvr_picture_default(a->dev, i);
+    int d = a->tv ? 128 : hdpvr_picture_default(a->dev, i);
     pthread_mutex_unlock(&a->lock);
     return d;
 }
 
 void app_set_preview(app_t *a, int on)
 {
+    if (a->tv)
+        tv_send(a->tv, "preview %d", on != 0);
     pthread_mutex_lock(&a->lock);
     a->preview = on != 0;
     a->retry = 1;
@@ -1038,13 +1078,24 @@ void app_peaks(app_t *a, double db[2])
     }
 }
 
-void app_set_monitor(app_t *a, int on) { a->monitor = on; }
+void app_set_monitor(app_t *a, int on)
+{
+    a->monitor = on;
+    if (a->tv)
+        tv_send(a->tv, "monitor %d", on != 0);
+}
 
 /* 150 ms behind the decoder: ffmpeg hands the sound over a few AAC frames at a time as the
  * transport stream interleaves it, and the cushion has to outlast the gaps (see monitor_ring.h) */
 static int render(app_t *a, int16_t *out, float *L, float *R, int frames)
 {
-    return monitor_ring_read(&a->ring, AUDIO_RATE * 150 / 1000, out, L, R, frames, a->monitor ? 1.0f : 0.0f);
+    uint32_t target = AUDIO_RATE * 150 / 1000;
+    if (a->tv) { /* the tuner delivers its sound in bursts; the cushion has to outlast one */
+        uint32_t c = (uint32_t)a->tv_chunk * 13 / 10;
+        if (c > target)
+            target = c;
+    }
+    return monitor_ring_read(&a->ring, target, out, L, R, frames, a->monitor ? 1.0f : 0.0f);
 }
 
 int app_audio_render(app_t *a, int16_t *out, int frames) { return render(a, out, NULL, NULL, frames); }
@@ -1238,12 +1289,16 @@ void app_set_setting_int(const char *key, int v)
 
 static int write_file(void *ctx, const uint8_t *p, size_t n) { return fwrite(p, 1, n, ctx) == n ? 0 : -1; }
 
+static int tv_record_start(app_t *a, const char *folder, char *path, int pathlen, char *err, int errlen);
+
 int app_record_start(app_t *a, const char *folder, char *path, int pathlen, char *err, int errlen)
 {
     if (app_state(a) != APP_STREAMING) {
         snprintf(err, (size_t)errlen, "There is no picture to record yet.");
         return -1;
     }
+    if (a->tv)
+        return tv_record_start(a, folder, path, pathlen, err, errlen);
     make_dir(folder);
     app_timestamped_path(folder, "ts", path, pathlen);
     FILE *f = app_fopen(path, "wb");
@@ -1297,6 +1352,18 @@ static void *stop_thread(void *arg)
 
 void app_record_stop(app_t *a, app_done_cb done, void *user)
 {
+    if (a->tv) {
+        pthread_mutex_lock(&a->lock);
+        int rec = a->tv_rec;
+        if (rec) {
+            a->tv_done = done;
+            a->tv_done_user = user;
+        }
+        pthread_mutex_unlock(&a->lock);
+        if (rec)
+            tv_send(a->tv, "stop");
+        return;
+    }
     pthread_mutex_lock(&a->data_lock);
     sink_t *rec = a->rec;
     FILE *f = a->rec_file;
@@ -1320,6 +1387,12 @@ void app_record_stop(app_t *a, app_done_cb done, void *user)
 
 int app_is_recording(app_t *a)
 {
+    if (a->tv) {
+        pthread_mutex_lock(&a->lock);
+        int r = a->tv_rec || a->tv_rec_pending;
+        pthread_mutex_unlock(&a->lock);
+        return r;
+    }
     pthread_mutex_lock(&a->data_lock);
     int r = a->rec != NULL;
     pthread_mutex_unlock(&a->data_lock);
@@ -1430,6 +1503,12 @@ int app_stop_after_due(app_t *a)
 double app_record_seconds(app_t *a)
 {
     struct timespec now;
+    if (a->tv) {
+        pthread_mutex_lock(&a->lock);
+        double sec = a->tv_rec ? a->tv_sec : 0;
+        pthread_mutex_unlock(&a->lock);
+        return sec;
+    }
     mono_ts(&now);
     pthread_mutex_lock(&a->data_lock);
     double s = a->rec ? (now.tv_sec - a->rec_t0.tv_sec) + (now.tv_nsec - a->rec_t0.tv_nsec) / 1e9 : 0;
@@ -1439,10 +1518,213 @@ double app_record_seconds(app_t *a)
 
 uint64_t app_record_bytes(app_t *a)
 {
+    if (a->tv) {
+        pthread_mutex_lock(&a->lock);
+        uint64_t b = a->tv_rec ? a->tv_bytes : 0;
+        pthread_mutex_unlock(&a->lock);
+        return b;
+    }
     pthread_mutex_lock(&a->data_lock);
     uint64_t b = a->rec ? sink_written(a->rec) : 0;
     pthread_mutex_unlock(&a->data_lock);
     return b;
+}
+
+/* ---- TV tuner mode ---- */
+
+int app_tv_available(void) { return tv_helper_available(); }
+int app_is_tv(app_t *a) { return a && a->tv != NULL; }
+
+static void tv_on_state(void *u, int st, const char *msg, int w, int h, int fps_x100, int wide)
+{
+    app_t *a = u;
+    static const char *const defaults[] = { "Looking for the tuner...", "The tuner needs attention", "Starting the tuner...",
+                                            "No signal", "Streaming" };
+    if (st < 0 || st > 4)
+        st = 1;
+    pthread_mutex_lock(&a->lock);
+    a->state = (app_state_t)st;
+    snprintf(a->status, sizeof(a->status), "%s", msg && msg[0] ? msg : defaults[st]);
+    if (st == APP_STREAMING) {
+        a->sig_w = w, a->sig_h = h, a->sig_fps = (fps_x100 + 50) / 100;
+        a->tv_wide = wide;
+    } else {
+        a->sig_w = a->sig_h = a->sig_fps = 0;
+    }
+    pthread_mutex_unlock(&a->lock);
+}
+
+static void tv_on_frame(void *u, const uint8_t *bgrx, int w, int h)
+{
+    app_t *a = u;
+    if (!a->preview || w > 1280 || h > 720)
+        return;
+    pthread_mutex_lock(&a->frame_lock);
+    a->fw = w, a->fh = h, a->hd = 0;
+    memcpy(a->rgb, bgrx, (size_t)w * h * 4);
+    a->seq++;
+    pthread_mutex_unlock(&a->frame_lock);
+}
+
+static void tv_on_levels(void *u, float l, float r)
+{
+    app_t *a = u;
+    float db[2] = { l, r };
+    for (int c = 0; c < 2; c++) {
+        int p = (int)(32768.0 * pow(10.0, db[c] / 20.0));
+        if (p > 32767)
+            p = 32767;
+        if (p > a->peak[c])
+            a->peak[c] = p;
+    }
+}
+
+static void tv_on_audio(void *u, const int16_t *pcm, int frames)
+{
+    app_t *a = u;
+    volatile int unused[2] = { 0, 0 }; /* the meters follow the helper's level messages */
+    if (frames > a->tv_chunk)
+        a->tv_chunk = frames;
+    monitor_ring_write(&a->ring, pcm, frames, unused);
+}
+
+static void tv_on_started(void *u)
+{
+    app_t *a = u;
+    pthread_mutex_lock(&a->lock);
+    a->tv_rec = 1;
+    a->tv_rec_pending = 0;
+    a->tv_sec = 0;
+    a->tv_bytes = 0;
+    pthread_mutex_unlock(&a->lock);
+}
+
+static void tv_on_done(void *u, int ok, const char *path, const char *err, int frames, int cc_frames)
+{
+    app_t *a = u;
+    (void)frames, (void)cc_frames;
+    pthread_mutex_lock(&a->lock);
+    int was_pending = a->tv_rec_pending;
+    app_done_cb done = a->tv_done;
+    void *user = a->tv_done_user;
+    char shown[1024];
+    snprintf(shown, sizeof(shown), "%s", path && path[0] ? path : a->tv_path);
+    a->tv_done = NULL;
+    a->tv_rec = 0;
+    a->tv_rec_pending = 0;
+    if (!ok) {
+        a->tv_rec_failed = 1;
+        snprintf(a->tv_err, sizeof(a->tv_err), "%s", err && err[0] ? err : "The recording failed");
+        fprintf(stderr, APP_NAME ": %s\n", a->tv_err);
+    }
+    pthread_mutex_unlock(&a->lock);
+    if (!was_pending && done)
+        done(user, ok, shown);
+}
+
+static void tv_on_progress(void *u, double sec, uint64_t bytes)
+{
+    app_t *a = u;
+    pthread_mutex_lock(&a->lock);
+    a->tv_sec = sec, a->tv_bytes = bytes;
+    pthread_mutex_unlock(&a->lock);
+}
+
+app_t *app_start_tv(void)
+{
+    if (!tv_helper_available())
+        return NULL;
+    app_t *a = calloc(1, sizeof(*a));
+    if (!a)
+        return NULL;
+    for (int i = 0; i < 5; i++)
+        a->pic[i] = -1;
+    pthread_mutex_init(&a->lock, NULL);
+    pthread_cond_init(&a->cv, NULL);
+    pthread_mutex_init(&a->data_lock, NULL);
+    pthread_mutex_init(&a->frame_lock, NULL);
+    a->monitor = 1;
+    a->preview = 1;
+    a->ring.frames = a->ring_frames;
+    a->ring.size = RING_FRAMES;
+    a->fw = 720;
+    a->fh = 480;
+    a->hd = 0;
+    a->rgb = calloc((size_t)1280 * 720, 4); /* big enough for any picture the helper sends */
+    a->state = APP_SEARCHING;
+    snprintf(a->status, sizeof(a->status), "Looking for the tuner...");
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
+    a->out = sa_output_start(AUDIO_RATE, output_cb, a);
+    if (!a->out)
+        snprintf(a->problem, sizeof(a->problem), "No audio output device for monitoring");
+#endif
+    tv_events_t ev = { tv_on_state, tv_on_frame, tv_on_levels, tv_on_audio, tv_on_started, tv_on_done, tv_on_progress, a };
+    a->tv = tv_open(&ev);
+    if (!a->tv) {
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
+        sa_output_stop(a->out);
+#endif
+        free(a->rgb);
+        free(a);
+        return NULL;
+    }
+    tv_send(a->tv, "monitor 1");
+    return a;
+}
+
+void app_tv_command(app_t *a, const char *fmt, ...)
+{
+    char line[600];
+    va_list ap;
+    if (!a || !a->tv)
+        return;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    tv_send(a->tv, "%s", line);
+}
+
+static void tv_free(app_t *a)
+{
+    tv_close(a->tv); /* finishes a recording in progress */
+    a->tv = NULL;
+#if !defined(__APPLE__) || defined(LEGACY_MAC)
+    sa_output_stop(a->out);
+#endif
+    free(a->rgb);
+    free(a);
+}
+
+static int tv_record_start(app_t *a, const char *folder, char *path, int pathlen, char *err, int errlen)
+{
+    make_dir(folder);
+    app_timestamped_path(folder, "mpg", path, pathlen);
+    pthread_mutex_lock(&a->lock);
+    a->tv_rec_pending = 1;
+    a->tv_rec_failed = 0;
+    a->tv_err[0] = 0;
+    snprintf(a->tv_path, sizeof(a->tv_path), "%s", path);
+    pthread_mutex_unlock(&a->lock);
+    tv_send(a->tv, "record %s", path);
+    /* the helper answers within a moment: started, or why not */
+    int64_t until = now_ms() + 10000;
+    pthread_mutex_lock(&a->lock);
+    while (a->tv_rec_pending && now_ms() < until) {
+        pthread_mutex_unlock(&a->lock);
+#ifdef _WIN32
+        Sleep(20);
+#else
+        usleep(20000);
+#endif
+        pthread_mutex_lock(&a->lock);
+    }
+    int ok = a->tv_rec && !a->tv_rec_failed;
+    if (!ok) {
+        snprintf(err, (size_t)errlen, "%s", a->tv_err[0] ? a->tv_err : "The tuner did not start the recording.");
+        a->tv_rec_pending = 0;
+    }
+    pthread_mutex_unlock(&a->lock);
+    return ok ? 0 : -1;
 }
 
 /* ---- snapshot: minimal PNG writer (stored deflate blocks) ---- */

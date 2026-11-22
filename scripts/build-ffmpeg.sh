@@ -34,16 +34,19 @@ if [ ! -f "$SRC/configure" ]; then
   tar -C "$TOP" -xJf "$TOP/ffmpeg-$VER.tar.xz"
 fi
 
+# The mpeg2video/mp2/ac3 encoders, the mpeg and mpegts muxers, rawvideo/mpegvideo/wav input, setts and setfield are for
+# wintv-capture (the Hauppauge WinTV tuner helper), which encodes its recordings with this ffmpeg.
 FEATURES="--disable-everything --disable-autodetect --disable-doc --disable-debug --disable-network
   --disable-ffplay --disable-ffprobe --disable-avdevice --enable-static --disable-shared
   --enable-swscale --enable-swresample
   --enable-protocol=file,pipe
-  --enable-demuxer=mpegts
-  --enable-parser=h264,aac,ac3
-  --enable-decoder=h264,aac,ac3
-  --enable-encoder=rawvideo,pcm_s16le,pcm_s16be
-  --enable-muxer=rawvideo,pcm_s16le,pcm_s16be
-  --enable-filter=yadif,scale,fps,format,null,anull,aformat,aresample"
+  --enable-demuxer=mpegts,rawvideo,mpegvideo,wav
+  --enable-parser=h264,aac,ac3,mpegvideo,mpegaudio
+  --enable-decoder=h264,aac,ac3,rawvideo,pcm_s16le
+  --enable-encoder=rawvideo,pcm_s16le,pcm_s16be,mpeg2video,mp2,ac3
+  --enable-muxer=rawvideo,pcm_s16le,pcm_s16be,mpeg2video,mpeg,mpegts
+  --enable-bsf=setts
+  --enable-filter=yadif,scale,fps,format,null,anull,aformat,aresample,setfield"
 
 case $TARGET in
 macos-*)

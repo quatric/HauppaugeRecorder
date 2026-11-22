@@ -6,6 +6,10 @@
  * The control bar under the preview selects the video and audio inputs, the
  * encoder bitrate and the folder, and starts/stops recording the box's own
  * H.264 transport stream (.ts).
+ *
+ * With the helper wintv-capture.exe next to it, the Device box also offers the
+ * Hauppauge WinTV USB tuner (HVR-950Q): a TV channel, cable or antenna, and an
+ * MPEG-2 bitrate, recording .mpg with the line 21 captions inside.
  */
 #define COBJMACROS
 #ifndef UNICODE
@@ -25,19 +29,20 @@
 
 enum {
     ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_PREVIEW, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
-    ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER,
+    ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER, ID_DEVICE, ID_CHANNEL, ID_CABLE, ID_BITRATE, ID_LBL_CHAN, ID_LBL_MBPS,
     IDM_RECORD = 200, IDM_SNAPSHOT, IDM_RCLICK_SNAP, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE, IDM_PICTURE,
-    TIMER_FRAME = 1, TIMER_UI = 2,
+    TIMER_FRAME = 1, TIMER_UI = 2, TIMER_TV = 3,
     WM_APP_RECDONE = WM_APP + 1,
 };
-#define NLABELS 7
+#define NLABELS 9 /* 7 and 8: Channel, Mbit/s (WinTV) */
 
 static struct {
     HINSTANCE inst;
     HWND wnd, preview;
     HWND input, pal, audio, wide, previewchk, quality, folder_btn, record, monitor, time, status, meter[2];
     HWND labels[NLABELS];
-    HWND stopafter;
+    HWND stopafter, device, channel, cable, bitrate;
+    int tv;              /* 1: the WinTV tuner is the device, 0: the HD PVR */
     HFONT font, time_font, badge_font, msg_font;
     HBRUSH bar_brush;
     HMENU menu;
@@ -225,16 +230,32 @@ static void layout(void)
     int bar = S(BAR_H), y1 = c.bottom - bar + S(10), y2 = c.bottom - bar + S(46);
     MoveWindow(G.preview, 0, 0, c.right, c.bottom - bar, TRUE);
     int x = S(12), lh = S(20);
-    struct { HWND h; int w, dy, hh, gap; } row1[] = {
-        { G.labels[0], 36, 3, 20, 6 },  { G.input, 100, 0, 200, 6 },   { G.pal, 50, 2, 20, 16 },
-        { G.labels[1], 38, 3, 20, 6 },  { G.audio, 90, 0, 200, 6 },    { G.wide, 96, 2, 20, 6 },
-        { G.previewchk, 70, 2, 20, 16 },
-        { G.labels[2], 46, 3, 20, 6 },  { G.quality, 160, 0, 200, 16 }, { G.labels[3], 50, 3, 20, 6 },
+    struct { HWND h; int w, dy, hh, gap; } hd_row[] = {
+        { G.device, 96, 0, 200, 10 },
+        { G.labels[0], 36, 3, 20, 4 },  { G.input, 90, 0, 200, 4 },    { G.pal, 44, 2, 20, 10 },
+        { G.labels[1], 38, 3, 20, 4 },  { G.audio, 78, 0, 200, 4 },    { G.wide, 90, 2, 20, 4 },
+        { G.previewchk, 70, 2, 20, 10 },
+        { G.labels[2], 46, 3, 20, 4 },  { G.quality, 136, 0, 200, 10 }, { G.labels[3], 50, 3, 20, 4 },
         { G.folder_btn, 180, -1, 26, 6 },
+    }, tv_row[] = {
+        { G.device, 110, 0, 200, 12 },
+        { G.labels[7], 52, 3, 20, 4 },  { G.channel, 40, 0, 22, 8 },   { G.cable, 54, 2, 20, 8 },
+        { G.pal, 40, 2, 20, 4 },        { G.wide, 90, 2, 20, 4 },      { G.previewchk, 66, 2, 20, 12 },
+        { G.labels[2], 46, 3, 20, 4 },  { G.quality, 124, 0, 200, 10 },
+        { G.labels[8], 50, 3, 20, 4 },  { G.bitrate, 40, 0, 22, 12 },  { G.folder_btn, 150, -1, 26, 6 },
     };
-    for (size_t i = 0; i < sizeof(row1) / sizeof(row1[0]); i++) {
-        MoveWindow(row1[i].h, x, y1 + S(row1[i].dy), S(row1[i].w), S(row1[i].hh), TRUE);
-        x += S(row1[i].w) + S(row1[i].gap);
+    {
+        size_t n = G.tv ? sizeof(tv_row) / sizeof(tv_row[0]) : sizeof(hd_row) / sizeof(hd_row[0]);
+        __typeof__(hd_row[0]) *row = G.tv ? tv_row : hd_row;
+        for (size_t i = 0; i < n; i++) {
+            if (row[i].h == G.device && !app_tv_available())
+                continue; /* HD PVR only: nothing to choose */
+            int w = S(row[i].w);
+            if (row[i].h == G.folder_btn) /* the last box takes what is left */
+                w = c.right - x - S(12) > S(90) ? c.right - x - S(12) : S(90);
+            MoveWindow(row[i].h, x, y1 + S(row[i].dy), w, S(row[i].hh), TRUE);
+            x += w + S(row[i].gap);
+        }
     }
     x = S(12);
     MoveWindow(G.record, x, y2, S(110), S(28), TRUE);
@@ -278,6 +299,17 @@ static void build_controls(void)
 {
     G.preview = CreateWindowExW(0, L"HDPVRPreview", L"", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, G.wnd, NULL,
                                 G.inst, NULL);
+    {
+        static const char *const devs[2] = { "HD PVR", "WinTV tuner" };
+        G.device = make_combo(ID_DEVICE, devs, 2);
+        G.labels[7] = make(L"STATIC", L"Channel", 0, ID_LBL_CHAN);
+        G.channel = make(L"EDIT", L"", WS_BORDER | ES_NUMBER | ES_CENTER | ES_AUTOHSCROLL | WS_TABSTOP, ID_CHANNEL);
+        SendMessageW(G.channel, EM_SETLIMITTEXT, 3, 0);
+        G.cable = make(L"BUTTON", L"Cable", BS_AUTOCHECKBOX | WS_TABSTOP, ID_CABLE);
+        G.labels[8] = make(L"STATIC", L"Mbit/s", 0, ID_LBL_MBPS);
+        G.bitrate = make(L"EDIT", L"", WS_BORDER | ES_CENTER | ES_AUTOHSCROLL | WS_TABSTOP, ID_BITRATE);
+        SendMessageW(G.bitrate, EM_SETLIMITTEXT, 5, 0);
+    }
     G.labels[0] = make(L"STATIC", L"Input", 0, ID_LBL_INPUT);
     G.input = make_combo(ID_INPUT, app_video_names, 3);
     G.pal = make(L"BUTTON", L"PAL", BS_AUTOCHECKBOX | WS_TABSTOP, ID_PAL);
@@ -449,8 +481,12 @@ static void reveal_file(const char *path)
 static void update_enabled(void)
 {
     int recording = app_is_recording(G.app) || G.finishing;
+    EnableWindow(G.device, !recording);
+    EnableWindow(G.channel, !recording);
+    EnableWindow(G.cable, !recording);
+    EnableWindow(G.bitrate, !recording);
     EnableWindow(G.input, !recording);
-    EnableWindow(G.pal, !recording && sel(G.input) != APP_VIDEO_COMPONENT);
+    EnableWindow(G.pal, !recording && (G.tv || sel(G.input) != APP_VIDEO_COMPONENT));
     EnableWindow(G.audio, !recording);
     EnableWindow(G.quality, !recording);
     EnableWindow(G.folder_btn, !recording);
@@ -506,8 +542,163 @@ static void snapshot(void)
     }
 }
 
+/* ---- the device: HD PVR or the WinTV tuner ---- */
+
+static const char *const tv_quality_names[4] = { "Low (3 Mbit/s)", "Medium (5 Mbit/s)", "High (7 Mbit/s)", "Best (9 Mbit/s)" };
+static const char *const tv_quality_ids[4] = { "low", "medium", "high", "best" };
+
+/* shows the controls of the current device and fills the quality box */
+static void apply_mode_ui(void)
+{
+    int tv = G.tv, have_dev = app_tv_available();
+    HWND hd_only[] = { G.input, G.audio, G.labels[0], G.labels[1] };
+    HWND tv_only[] = { G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
+    for (size_t i = 0; i < sizeof(hd_only) / sizeof(hd_only[0]); i++)
+        ShowWindow(hd_only[i], tv ? SW_HIDE : SW_SHOW);
+    for (size_t i = 0; i < sizeof(tv_only) / sizeof(tv_only[0]); i++)
+        ShowWindow(tv_only[i], tv ? SW_SHOW : SW_HIDE);
+    ShowWindow(G.device, have_dev ? SW_SHOW : SW_HIDE);
+    SendMessageW(G.device, CB_SETCURSEL, tv, 0);
+    SendMessageW(G.quality, CB_RESETCONTENT, 0, 0);
+    int n = tv ? 4 : APP_QUALITIES;
+    for (int i = 0; i < n; i++) {
+        wchar_t w[100];
+        utf8_to_w(tv ? tv_quality_names[i] : app_quality_names[i], w, 100);
+        SendMessageW(G.quality, CB_ADDSTRING, 0, (LPARAM)w);
+    }
+    int q = tv ? app_setting_int("tv_quality", 2) : app_setting_int("quality", 0);
+    SendMessageW(G.quality, CB_SETCURSEL, q < 0 || q >= n ? 0 : q, 0);
+    SendMessageW(G.pal, BM_SETCHECK, app_setting_int(tv ? "tv_pal" : "pal", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(G.wide, BM_SETCHECK, app_setting_int(tv ? "tv_widescreen" : "widescreen", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+    if (tv) {
+        char s[16];
+        wchar_t w[16];
+        snprintf(s, sizeof(s), "%d", app_setting_int("tv_channel", 3));
+        utf8_to_w(s, w, 16);
+        SetWindowTextW(G.channel, w);
+        SendMessageW(G.cable, BM_SETCHECK, app_setting_int("tv_cable", 1) ? BST_CHECKED : BST_UNCHECKED, 0);
+        app_setting_str("tv_bitrate", s, sizeof(s), "");
+        utf8_to_w(s, w, 16);
+        SetWindowTextW(G.bitrate, w);
+    }
+    layout();
+}
+
+static int edit_int(HWND e, int def)
+{
+    wchar_t w[32];
+    char u[64];
+    GetWindowTextW(e, w, 32);
+    w_to_utf8(w, u, sizeof(u));
+    char *end;
+    long v = strtol(u, &end, 10);
+    return end == u ? def : (int)v;
+}
+
+static double edit_double(HWND e)
+{
+    wchar_t w[32];
+    char u[64];
+    GetWindowTextW(e, w, 32);
+    w_to_utf8(w, u, sizeof(u));
+    double v = atof(u);
+    return v < 0 ? 0 : v > 15 ? 15 : v;
+}
+
+/* sends the whole TV configuration, then starts the tuner */
+static void tv_configure(void)
+{
+    int q = sel(G.quality);
+    app_tv_command(G.app, "source tuner");
+    app_tv_command(G.app, "channel %d", edit_int(G.channel, 3));
+    app_tv_command(G.app, "cable %d", checked(G.cable));
+    app_tv_command(G.app, "pal %d", checked(G.pal));
+    app_tv_command(G.app, "wide %d", checked(G.wide));
+    app_tv_command(G.app, "quality %s", tv_quality_ids[q < 0 || q > 3 ? 2 : q]);
+    app_tv_command(G.app, "bitrate %.2f", edit_double(G.bitrate));
+    app_tv_command(G.app, "cc 1");
+    app_tv_command(G.app, "start");
+}
+
+/* (Re)starts the engine for the chosen device. Not while recording. */
+static void start_engine(int tv, int input, int audio, int quality, int pal)
+{
+    int wide = app_setting_int(tv ? "tv_widescreen" : "widescreen", 0), monitor = app_setting_int("monitor", 1);
+    int preview = app_setting_int("preview", 1);
+    if (G.app)
+        app_close(G.app);
+    G.app = NULL;
+    G.tv = 0;
+    if (tv)
+        G.app = app_start_tv();
+    if (G.app)
+        G.tv = 1;
+    else
+        G.app = app_start(input, audio, quality, pal);
+    if (!G.app) {
+        MessageBoxW(NULL, L"Out of memory", L"HauppaugeRecorder", MB_ICONERROR);
+        exit(1);
+    }
+    G.w = G.h = 0; /* the frame buffer follows the new engine's picture size */
+    apply_mode_ui();
+    app_set_widescreen(G.app, wide);
+    app_set_preview(G.app, preview);
+    app_set_monitor(G.app, monitor);
+    if (G.tv)
+        tv_configure();
+    app_set_stop_after_minutes(G.app, app_setting_int("stop_after_min", 0));
+}
+
+static void device_changed(void)
+{
+    int tv = sel(G.device) == 1;
+    if (tv == G.tv || app_is_recording(G.app))
+        return;
+    app_set_setting_int("device", tv);
+    start_engine(tv, app_setting_int("input", 0), app_setting_int("audio", 0), app_setting_int("quality", 0),
+                 app_setting_int("pal", 0));
+    update_enabled();
+    InvalidateRect(G.preview, NULL, TRUE);
+}
+
+/* channel and bitrate boxes: applied a moment after typing stops */
+static void tv_typed(void)
+{
+    SetTimer(G.wnd, TIMER_TV, 700, NULL);
+}
+
+static void tv_apply_typed(void)
+{
+    KillTimer(G.wnd, TIMER_TV);
+    if (!G.tv || app_is_recording(G.app))
+        return;
+    int ch = edit_int(G.channel, 0);
+    if (ch >= 2 && ch <= 135) {
+        app_set_setting_int("tv_channel", ch);
+        app_tv_command(G.app, "channel %d", ch);
+    }
+    double br = edit_double(G.bitrate);
+    {
+        char s[32];
+        snprintf(s, sizeof(s), br > 0 ? "%.2f" : "", br);
+        app_set_setting_str("tv_bitrate", s);
+    }
+    app_tv_command(G.app, "bitrate %.2f", br);
+}
+
 static void source_changed(void)
 {
+    if (G.tv) {
+        int q = sel(G.quality);
+        app_set_setting_int("tv_quality", q);
+        app_set_setting_int("tv_pal", checked(G.pal));
+        app_set_setting_int("tv_cable", checked(G.cable));
+        app_tv_command(G.app, "quality %s", tv_quality_ids[q < 0 || q > 3 ? 2 : q]);
+        app_tv_command(G.app, "cable %d", checked(G.cable));
+        app_tv_command(G.app, "pal %d", checked(G.pal));
+        update_enabled();
+        return;
+    }
     app_set_setting_int("input", sel(G.input));
     app_set_setting_int("audio", sel(G.audio));
     app_set_setting_int("quality", sel(G.quality));
@@ -516,15 +707,30 @@ static void source_changed(void)
     update_enabled();
 }
 
+/* after full screen: hide again what the current device does not use */
+static void apply_mode_ui_visibility(void)
+{
+    HWND hd_only[] = { G.input, G.audio, G.labels[0], G.labels[1] };
+    HWND tv_only[] = { G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
+    for (size_t i = 0; i < sizeof(hd_only) / sizeof(hd_only[0]); i++)
+        ShowWindow(hd_only[i], G.tv ? SW_HIDE : SW_SHOW);
+    for (size_t i = 0; i < sizeof(tv_only) / sizeof(tv_only[0]); i++)
+        ShowWindow(tv_only[i], G.tv ? SW_SHOW : SW_HIDE);
+    ShowWindow(G.device, app_tv_available() ? SW_SHOW : SW_HIDE);
+}
+
 static void toggle_fullscreen(void)
 {
     DWORD style = (DWORD)GetWindowLongW(G.wnd, GWL_STYLE);
     HWND bar[] = { G.input, G.pal, G.audio, G.wide, G.previewchk, G.quality, G.folder_btn, G.record, G.monitor, G.time,
                    G.status, G.meter[0], G.meter[1], G.labels[0], G.labels[1], G.labels[2], G.labels[3],
-                   G.labels[4], G.labels[5], G.labels[6], G.stopafter };
+                   G.labels[4], G.labels[5], G.labels[6], G.stopafter, G.device, G.channel, G.cable, G.bitrate, G.labels[7],
+                   G.labels[8] };
     G.fullscreen = !G.fullscreen;
     for (size_t i = 0; i < sizeof(bar) / sizeof(bar[0]); i++)
         ShowWindow(bar[i], G.fullscreen ? SW_HIDE : SW_SHOW);
+    if (!G.fullscreen)
+        apply_mode_ui_visibility();
     if (G.fullscreen) {
         MONITORINFO mi = { sizeof(mi) };
         G.placement.length = sizeof(G.placement);
@@ -604,7 +810,10 @@ static void tick_ui(void)
     int w, h, fps;
     char title[200];
     if (app_signal(G.app, &w, &h, &fps))
-        snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 %s %d\xc3\x97%d", app_video_names[sel(G.input)], w, h);
+        snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 %s %d\xc3\x97%d",
+                 G.tv ? "WinTV channel " : app_video_names[sel(G.input)], w, h);
+    if (G.tv && app_signal(G.app, &w, &h, &fps))
+        snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 WinTV channel %d, %d\xc3\x97%d", edit_int(G.channel, 0), w, h);
     else
         snprintf(title, sizeof(title), APP_NAME);
     set_text(G.wnd, title);
@@ -615,7 +824,7 @@ static void tick_ui(void)
     last = st;
 
     /* the device is there but has no usable driver: offer to install it, once */
-    if (st == APP_NO_DRIVER && !G.asked_driver) {
+    if (st == APP_NO_DRIVER && !G.asked_driver && !G.tv) {
         G.asked_driver = 1;
         if (MessageBoxW(G.wnd,
                         L"An HD PVR is plugged in, but it does not have the driver HauppaugeRecorder uses "
@@ -662,7 +871,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_GETMINMAXINFO: {
         MINMAXINFO *mm = (MINMAXINFO *)(void *)lp;
-        mm->ptMinTrackSize.x = S(940);
+        mm->ptMinTrackSize.x = S(app_tv_available() ? 980 : 940);
         mm->ptMinTrackSize.y = S(420);
         return 0;
     }
@@ -690,6 +899,8 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             }
             if (G.frame && app_get_frame(G.app, G.frame, G.w, G.h, &G.seq))
                 InvalidateRect(G.preview, NULL, FALSE);
+        } else if (wp == TIMER_TV) {
+            tv_apply_typed();
         } else {
             tick_ui();
         }
@@ -703,7 +914,19 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 source_changed();
             return 0;
         case ID_PAL:
+        case ID_CABLE:
             source_changed();
+            return 0;
+        case ID_DEVICE:
+            if (HIWORD(wp) == CBN_SELCHANGE)
+                device_changed();
+            return 0;
+        case ID_CHANNEL:
+        case ID_BITRATE:
+            if (HIWORD(wp) == EN_CHANGE)
+                tv_typed();
+            else if (HIWORD(wp) == EN_KILLFOCUS)
+                tv_apply_typed();
             return 0;
         case ID_STOPAFTER:
             if (HIWORD(wp) == CBN_SELCHANGE) { /* a preset */
@@ -732,7 +955,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_WIDE: {
             int on = checked(G.wide);
             app_set_widescreen(G.app, on);
-            app_set_setting_int("widescreen", on);
+            app_set_setting_int(G.tv ? "tv_widescreen" : "widescreen", on);
             InvalidateRect(G.preview, NULL, TRUE);
             return 0;
         }
@@ -885,33 +1108,25 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     int input = app_setting_int("input", 0), audio = app_setting_int("audio", 0);
     int quality = app_setting_int("quality", 0), pal = app_setting_int("pal", 0);
-    int wide = app_setting_int("widescreen", 0), monitor = app_setting_int("monitor", 1);
+    int monitor = app_setting_int("monitor", 1);
     input = input < 0 || input > 2 ? 0 : input;
     audio = audio < 0 || audio > 2 ? 0 : audio;
     quality = quality < 0 || quality >= APP_QUALITIES ? 0 : quality;
     SendMessageW(G.input, CB_SETCURSEL, input, 0);
     SendMessageW(G.audio, CB_SETCURSEL, audio, 0);
-    SendMessageW(G.quality, CB_SETCURSEL, quality, 0);
-    SendMessageW(G.pal, BM_SETCHECK, pal ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(G.wide, BM_SETCHECK, wide ? BST_CHECKED : BST_UNCHECKED, 0);
     int preview = app_setting_int("preview", 1);
     SendMessageW(G.previewchk, BM_SETCHECK, preview ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(G.monitor, BM_SETCHECK, monitor ? BST_CHECKED : BST_UNCHECKED, 0);
 
-    G.app = app_start(input, audio, quality, pal);
-    if (!G.app) {
-        MessageBoxW(NULL, L"Out of memory", L"HauppaugeRecorder", MB_ICONERROR);
-        return 1;
-    }
-    app_set_widescreen(G.app, wide);
-    app_set_preview(G.app, preview);
     {
+        int tv = app_tv_available() && app_setting_int("device", 0) == 1;
+        G.tv = tv; /* what the controls show until the engine is up */
+        start_engine(tv, input, audio, quality, pal);
         int mins = app_setting_int("stop_after_min", -1);
         if (mins < 0) /* an older version saved the position of a preset */
             mins = app_stop_after_from_index(app_setting_int("stop_after", 0));
         stop_after_set(mins, 1);
     }
-    app_set_monitor(G.app, monitor);
     update_folder_button();
     update_enabled();
     layout();
