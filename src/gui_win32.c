@@ -25,7 +25,7 @@
 enum {
     ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_PREVIEW, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
     ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER,
-    IDM_RECORD = 200, IDM_SNAPSHOT, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE,
+    IDM_RECORD = 200, IDM_SNAPSHOT, IDM_RCLICK_SNAP, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE,
     TIMER_FRAME = 1, TIMER_UI = 2,
     WM_APP_RECDONE = WM_APP + 1,
 };
@@ -46,7 +46,7 @@ static struct {
     uint64_t seq;
     int w, h;
     char folder[1024];
-    int finishing, asked_driver;
+    int finishing, asked_driver, rclick_snap; /* right-click the picture saves a snapshot (View menu; not remembered, like the rest) */
     double level[2];
     int fullscreen;
     WINDOWPLACEMENT placement;
@@ -126,6 +126,10 @@ static LRESULT CALLBACK preview_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 1;
     case WM_LBUTTONDBLCLK:
         SendMessageW(G.wnd, WM_COMMAND, IDM_FULLSCREEN, 0);
+        return 0;
+    case WM_RBUTTONUP:
+        if (G.rclick_snap)
+            SendMessageW(G.wnd, WM_COMMAND, IDM_SNAPSHOT, 0);
         return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -314,6 +318,8 @@ static void build_menu(void)
     AppendMenuW(file, MF_SEPARATOR, 0, NULL);
     AppendMenuW(file, MF_STRING, IDM_EXIT, L"E&xit");
     AppendMenuW(view, MF_STRING, IDM_FULLSCREEN, L"&Full Screen\tF11");
+    AppendMenuW(view, MF_STRING | MF_CHECKED, IDM_RCLICK_SNAP, L"&Right-Click Saves Snapshot");
+    G.rclick_snap = 1;
     G.menu = CreateMenu();
     AppendMenuW(G.menu, MF_POPUP, (UINT_PTR)file, L"&File");
     AppendMenuW(G.menu, MF_POPUP, (UINT_PTR)view, L"&View");
@@ -683,6 +689,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case IDM_SNAPSHOT:
             snapshot();
+            return 0;
+        case IDM_RCLICK_SNAP:
+            G.rclick_snap = !G.rclick_snap;
+            CheckMenuItem(G.menu, IDM_RCLICK_SNAP, MF_BYCOMMAND | (G.rclick_snap ? MF_CHECKED : MF_UNCHECKED));
             return 0;
         case IDM_OPEN_FOLDER:
             open_folder();

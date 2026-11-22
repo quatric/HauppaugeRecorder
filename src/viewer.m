@@ -437,6 +437,12 @@ static NSPopUpButton *make_popup(const char *const *names, int n, id target, SEL
     if (e.clickCount == 2)
         [self.window toggleFullScreen:nil];
 }
+- (void)rightMouseDown:(NSEvent *)e
+{
+    (void)e;
+    if ([NSUserDefaults.standardUserDefaults boolForKey:@"rightClickSnapshot"])
+        [NSApp sendAction:@selector(snapshot:) to:NSApp.delegate from:self];
+}
 @end
 
 /* ---- app ---- */
@@ -477,7 +483,7 @@ static app_t *g_app;
 {
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     [ud registerDefaults:@{ @"input" : @0, @"audio" : @0, @"pal" : @NO, @"widescreen" : @NO, @"quality" : @0,
-                            @"monitor" : @YES, @"preview" : @YES }];
+                            @"monitor" : @YES, @"preview" : @YES, @"rightClickSnapshot" : @YES }];
     NSString *folder = [ud stringForKey:@"folder"];
     _folder = folder ? [NSURL fileURLWithPath:folder]
                      : [NSFileManager.defaultManager URLsForDirectory:NSMoviesDirectory
@@ -707,6 +713,7 @@ static app_t *g_app;
     [view addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"]
         .keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     [view addItemWithTitle:@"Show Preview" action:@selector(togglePreview:) keyEquivalent:@"e"];
+    [view addItemWithTitle:@"Right-Click Saves Snapshot" action:@selector(toggleRightClickSnapshot:) keyEquivalent:@""];
     viewItem.submenu = view;
     NSApp.mainMenu = bar;
 }
@@ -812,6 +819,12 @@ static app_t *g_app;
     [self previewChanged:sender];
 }
 
+- (void)toggleRightClickSnapshot:(id)sender
+{
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    [ud setBool:![ud boolForKey:@"rightClickSnapshot"] forKey:@"rightClickSnapshot"];
+}
+
 - (void)widescreenChanged:(id)sender
 {
     BOOL on = _wideCheck.state == NSControlStateValueOn;
@@ -858,6 +871,8 @@ static app_t *g_app;
     }
     if (item.action == @selector(snapshot:))
         return app_state(g_app) == APP_STREAMING && app_preview(g_app);
+    if (item.action == @selector(toggleRightClickSnapshot:))
+        item.state = [NSUserDefaults.standardUserDefaults boolForKey:@"rightClickSnapshot"] ? NSControlStateValueOn : NSControlStateValueOff;
     if (item.action == @selector(togglePreview:))
         item.state = app_preview(g_app) ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
