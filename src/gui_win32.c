@@ -29,7 +29,7 @@
 
 enum {
     ID_INPUT = 100, ID_PAL, ID_AUDIO, ID_WIDE, ID_PREVIEW, ID_QUALITY, ID_FOLDER, ID_RECORD, ID_MONITOR, ID_TIME, ID_STATUS,
-    ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER, ID_DEVICE, ID_CHANNEL, ID_CABLE, ID_BITRATE, ID_LBL_CHAN, ID_LBL_MBPS,
+    ID_METER_L, ID_METER_R, ID_LBL_INPUT, ID_LBL_AUDIO, ID_LBL_QUALITY, ID_LBL_SAVE, ID_LBL_L, ID_LBL_R, ID_LBL_STOP, ID_STOPAFTER, ID_DEVICE, ID_TVSRC, ID_CHANNEL, ID_CABLE, ID_BITRATE, ID_LBL_CHAN, ID_LBL_MBPS,
     IDM_RECORD = 200, IDM_SNAPSHOT, IDM_RCLICK_SNAP, IDM_CHOOSE_FOLDER, IDM_OPEN_FOLDER, IDM_EXIT, IDM_FULLSCREEN, IDM_ESCAPE, IDM_PICTURE,
     TIMER_FRAME = 1, TIMER_UI = 2, TIMER_TV = 3,
     WM_APP_RECDONE = WM_APP + 1,
@@ -41,7 +41,7 @@ static struct {
     HWND wnd, preview;
     HWND input, pal, audio, wide, previewchk, quality, folder_btn, record, monitor, time, status, meter[2];
     HWND labels[NLABELS];
-    HWND stopafter, device, channel, cable, bitrate;
+    HWND stopafter, device, tvsrc, channel, cable, bitrate;
     int tv;              /* 1: the WinTV tuner is the device, 0: the HD PVR */
     HFONT font, time_font, badge_font, msg_font;
     HBRUSH bar_brush;
@@ -219,6 +219,9 @@ static void draw_meter(DRAWITEMSTRUCT *d)
 
 #define BAR_H 84
 
+static const char *const tv_source_names[3] = { "Tuner", "S-Video", "Composite" };
+static const char *const tv_source_ids[3] = { "tuner", "svideo", "composite" };
+
 static void layout(void)
 {
     RECT c;
@@ -239,6 +242,7 @@ static void layout(void)
         { G.folder_btn, 180, -1, 26, 6 },
     }, tv_row[] = {
         { G.device, 110, 0, 200, 12 },
+        { G.tvsrc, 84, 0, 200, 8 },
         { G.labels[7], 52, 3, 20, 4 },  { G.channel, 40, 0, 22, 8 },   { G.cable, 54, 2, 20, 8 },
         { G.pal, 40, 2, 20, 4 },        { G.wide, 90, 2, 20, 4 },      { G.previewchk, 66, 2, 20, 12 },
         { G.labels[2], 46, 3, 20, 4 },  { G.quality, 124, 0, 200, 10 },
@@ -302,6 +306,7 @@ static void build_controls(void)
     {
         static const char *const devs[2] = { "HD PVR", "WinTV tuner" };
         G.device = make_combo(ID_DEVICE, devs, 2);
+        G.tvsrc = make_combo(ID_TVSRC, tv_source_names, 3);
         G.labels[7] = make(L"STATIC", L"Channel", 0, ID_LBL_CHAN);
         G.channel = make(L"EDIT", L"", WS_BORDER | ES_NUMBER | ES_CENTER | ES_AUTOHSCROLL | WS_TABSTOP, ID_CHANNEL);
         SendMessageW(G.channel, EM_SETLIMITTEXT, 3, 0);
@@ -482,8 +487,10 @@ static void update_enabled(void)
 {
     int recording = app_is_recording(G.app) || G.finishing;
     EnableWindow(G.device, !recording);
-    EnableWindow(G.channel, !recording);
-    EnableWindow(G.cable, !recording);
+    int tuner = !G.tv || sel(G.tvsrc) <= 0;
+    EnableWindow(G.tvsrc, !recording);
+    EnableWindow(G.channel, !recording && tuner);
+    EnableWindow(G.cable, !recording && tuner);
     EnableWindow(G.bitrate, !recording);
     EnableWindow(G.input, !recording);
     EnableWindow(G.pal, !recording && (G.tv || sel(G.input) != APP_VIDEO_COMPONENT));
@@ -552,7 +559,7 @@ static void apply_mode_ui(void)
 {
     int tv = G.tv, have_dev = app_tv_available();
     HWND hd_only[] = { G.input, G.audio, G.labels[0], G.labels[1] };
-    HWND tv_only[] = { G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
+    HWND tv_only[] = { G.tvsrc, G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
     for (size_t i = 0; i < sizeof(hd_only) / sizeof(hd_only[0]); i++)
         ShowWindow(hd_only[i], tv ? SW_HIDE : SW_SHOW);
     for (size_t i = 0; i < sizeof(tv_only) / sizeof(tv_only[0]); i++)
@@ -571,6 +578,8 @@ static void apply_mode_ui(void)
     SendMessageW(G.pal, BM_SETCHECK, app_setting_int(tv ? "tv_pal" : "pal", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(G.wide, BM_SETCHECK, app_setting_int(tv ? "tv_widescreen" : "widescreen", 0) ? BST_CHECKED : BST_UNCHECKED, 0);
     if (tv) {
+        int src = app_setting_int("tv_source", 0);
+        SendMessageW(G.tvsrc, CB_SETCURSEL, src < 0 || src > 2 ? 0 : src, 0);
         char s[16];
         wchar_t w[16];
         snprintf(s, sizeof(s), "%d", app_setting_int("tv_channel", 3));
@@ -609,7 +618,8 @@ static double edit_double(HWND e)
 static void tv_configure(void)
 {
     int q = sel(G.quality);
-    app_tv_command(G.app, "source tuner");
+    int src = sel(G.tvsrc);
+    app_tv_command(G.app, "source %s", tv_source_ids[src < 0 || src > 2 ? 0 : src]);
     app_tv_command(G.app, "channel %d", edit_int(G.channel, 3));
     app_tv_command(G.app, "cable %d", checked(G.cable));
     app_tv_command(G.app, "pal %d", checked(G.pal));
@@ -691,6 +701,8 @@ static void source_changed(void)
     if (G.tv) {
         int q = sel(G.quality);
         app_set_setting_int("tv_quality", q);
+        app_set_setting_int("tv_source", sel(G.tvsrc));
+        app_tv_command(G.app, "source %s", tv_source_ids[sel(G.tvsrc) < 0 ? 0 : sel(G.tvsrc)]);
         app_set_setting_int("tv_pal", checked(G.pal));
         app_set_setting_int("tv_cable", checked(G.cable));
         app_tv_command(G.app, "quality %s", tv_quality_ids[q < 0 || q > 3 ? 2 : q]);
@@ -711,7 +723,7 @@ static void source_changed(void)
 static void apply_mode_ui_visibility(void)
 {
     HWND hd_only[] = { G.input, G.audio, G.labels[0], G.labels[1] };
-    HWND tv_only[] = { G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
+    HWND tv_only[] = { G.tvsrc, G.channel, G.cable, G.bitrate, G.labels[7], G.labels[8] };
     for (size_t i = 0; i < sizeof(hd_only) / sizeof(hd_only[0]); i++)
         ShowWindow(hd_only[i], G.tv ? SW_HIDE : SW_SHOW);
     for (size_t i = 0; i < sizeof(tv_only) / sizeof(tv_only[0]); i++)
@@ -724,7 +736,7 @@ static void toggle_fullscreen(void)
     DWORD style = (DWORD)GetWindowLongW(G.wnd, GWL_STYLE);
     HWND bar[] = { G.input, G.pal, G.audio, G.wide, G.previewchk, G.quality, G.folder_btn, G.record, G.monitor, G.time,
                    G.status, G.meter[0], G.meter[1], G.labels[0], G.labels[1], G.labels[2], G.labels[3],
-                   G.labels[4], G.labels[5], G.labels[6], G.stopafter, G.device, G.channel, G.cable, G.bitrate, G.labels[7],
+                   G.labels[4], G.labels[5], G.labels[6], G.stopafter, G.device, G.tvsrc, G.channel, G.cable, G.bitrate, G.labels[7],
                    G.labels[8] };
     G.fullscreen = !G.fullscreen;
     for (size_t i = 0; i < sizeof(bar) / sizeof(bar[0]); i++)
@@ -811,9 +823,14 @@ static void tick_ui(void)
     char title[200];
     if (app_signal(G.app, &w, &h, &fps))
         snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 %s %d\xc3\x97%d",
-                 G.tv ? "WinTV channel " : app_video_names[sel(G.input)], w, h);
+                 G.tv ? "WinTV" : app_video_names[sel(G.input)], w, h);
     if (G.tv && app_signal(G.app, &w, &h, &fps))
-        snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 WinTV channel %d, %d\xc3\x97%d", edit_int(G.channel, 0), w, h);
+        {
+        if (sel(G.tvsrc) > 0)
+            snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 WinTV %s, %d\xc3\x97%d", tv_source_names[sel(G.tvsrc)], w, h);
+        else
+            snprintf(title, sizeof(title), APP_NAME " \xe2\x80\x94 WinTV channel %d, %d\xc3\x97%d", edit_int(G.channel, 0), w, h);
+    }
     else
         snprintf(title, sizeof(title), APP_NAME);
     set_text(G.wnd, title);
@@ -908,6 +925,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case ID_INPUT:
+        case ID_TVSRC:
         case ID_AUDIO:
         case ID_QUALITY:
             if (HIWORD(wp) == CBN_SELCHANGE)
