@@ -569,9 +569,9 @@ bool Session::start()
     snprintf(fr, sizeof fr, "%d/%d", (int)fps_num, (int)fps_den);
     char buf[2048];
     snprintf(buf, sizeof buf,
-             "%s -hide_banner -loglevel warning -f rawvideo -pix_fmt %s -video_size %dx%d -framerate %s -i - -an "
+             "%s -hide_banner -loglevel warning -f rawvideo -pix_fmt %s -video_size %dx%d -framerate %s -i pipe:0 -an "
              "-vf setfield=%s,scale=interl=1 -pix_fmt yuv420p -c:v mpeg2video -b:v %dk -maxrate %dk -minrate %dk -bufsize %dk "
-             "-bf 0 -g %d -flags +ildct+ilme -aspect %s -f mpeg2video -",
+             "-bf 0 -g %d -flags +ildct+ilme -aspect %s -f mpeg2video pipe:1",
              plat::quote(ffmpeg_path).c_str(), pixfmt.c_str(), vw, vh, fr, bff ? "bff" : "tff", (int)(rate * 1000), (int)(pk * 1000),
              cbr ? (int)(rate * 1000) : 0, (int)(pk * 1000 * 1.2 > 1835 ? 1835 : pk * 1000 * 1.2), fps_num == 25 ? 12 : 15,
              wide ? "16:9" : "4:3");

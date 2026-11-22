@@ -44,7 +44,7 @@ FEATURES="--disable-everything --disable-autodetect --disable-doc --disable-debu
   --enable-parser=h264,aac,ac3,mpegvideo,mpegaudio
   --enable-decoder=h264,aac,ac3,rawvideo,pcm_s16le
   --enable-encoder=rawvideo,pcm_s16le,pcm_s16be,mpeg2video,mp2,ac3
-  --enable-muxer=rawvideo,pcm_s16le,pcm_s16be,mpeg2video,mpeg,mpegts
+  --enable-muxer=rawvideo,pcm_s16le,pcm_s16be,mpeg2video,mpeg1system,mpegts
   --enable-bsf=setts
   --enable-filter=yadif,scale,fps,format,null,anull,aformat,aresample,setfield"
 
