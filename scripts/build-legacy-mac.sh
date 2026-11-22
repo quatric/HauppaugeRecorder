@@ -74,7 +74,7 @@ $T-gcc -isysroot "$SDK" -mmacosx-version-min=10.3 -O2 -c scripts/legacy-ppc-runt
 V=vendor/libusb
 LUSRC="$V/core.c $V/descriptor.c $V/hotplug.c $V/io.c $V/strerror.c $V/sync.c $V/os/events_posix.c \
 $V/os/threads_posix.c $V/os/darwin_usb.c"
-SRC="src/hdpvr.c src/app_core.c src/decoder.c src/sink.c src/audio_mac_legacy.c"
+SRC="src/hdpvr.c src/app_core.c src/decoder.c src/sink.c src/tvdev.c src/audio_mac_legacy.c"
 FRAMEWORKS="-framework IOKit -framework CoreFoundation -framework CoreAudio -framework AudioUnit -framework CoreServices"
 
 for arch in ppc i386; do
